@@ -34,4 +34,4 @@ export type Horarios = {
   fim_data?: string | null;
 };
 
-export type AbaOS = "servico" | "materiais" | "despesas";
+export type AbaOS = "servico" | "despesas";

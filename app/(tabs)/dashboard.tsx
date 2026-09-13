@@ -1,0 +1,23 @@
+import { Feather } from "@expo/vector-icons";
+import React, { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, RefreshControl, ScrollView, Text, View, TouchableOpacity, StyleSheet } from "react-native";
+import { API_URL, apiHeaders } from "@/constants/api";
+import { useAuthContext } from "@/hooks/useAuth";
+
+const C = { bg:"#F5F7FB", card:"#FFFFFF", ink:"#152238", muted:"#687386", navy:"#0F2747", accent:"#1677FF", line:"#E4E9F0", green:"#149447", orange:"#D98200" };
+export default function DashboardTecnico(){
+ const {auth}=useAuthContext(); const [d,setD]=useState<any>(null); const [loading,setLoading]=useState(true); const [refreshing,setRefreshing]=useState(false);
+ const carregar=useCallback(async()=>{try{const r=await fetch(`${API_URL}/tecnico/dashboard`,{headers:apiHeaders()});if(r.ok)setD(await r.json());}catch(e){console.warn(e)}finally{setLoading(false);setRefreshing(false)}},[]);
+ useEffect(()=>{carregar()},[carregar]);
+ const t=d?.totais||{};
+ const cards=[['briefcase','OS pendentes',t.pendentes||0,C.navy],['truck','Em deslocamento',t.deslocamento||0,C.accent],['tool','Em atendimento',t.atendimento||0,C.green],['coffee','Almoço',t.almoco||0,C.orange],['check-circle','Finalizadas hoje',t.finalizadas_hoje||0,C.green],['file-text','Despesas hoje',`R$ ${Number(d?.despesas_hoje||0).toFixed(2).replace('.',',')}`,C.navy]] as const;
+ return <ScrollView style={{backgroundColor:C.bg}} contentContainerStyle={st.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={()=>{setRefreshing(true);carregar()}}/>}>
+   <View style={st.header}><View><Text style={st.kicker}>PAINEL DO TÉCNICO</Text><Text style={st.title}>Olá, {auth?.usuario?.nome?.split(' ')[0]||'Técnico'} 👋</Text><Text style={st.sub}>Acompanhe sua rotina de campo.</Text></View><View style={st.avatar}><Feather name="user" size={22} color="#fff"/></View></View>
+   {loading?<View style={st.loading}><ActivityIndicator size="large"/><Text style={st.sub}>Carregando seu painel...</Text></View>:<>
+   <View style={st.grid}>{cards.map(([icon,label,value,color])=><View key={label} style={st.stat}><View style={[st.icon,{backgroundColor:color}]}><Feather name={icon as any} size={17} color="#fff"/></View><Text style={st.value}>{value}</Text><Text style={st.label}>{label}</Text></View>)}</View>
+   <View style={st.quick}><Text style={st.section}>Resumo rápido</Text><View style={st.row}><Feather name="package" size={19} color={C.accent}/><View style={{flex:1}}><Text style={st.rowTitle}>Solicitações de material</Text><Text style={st.rowSub}>Pedidos aguardando gestão</Text></View><Text style={st.badge}>{d?.solicitacoes_materiais||0}</Text></View></View>
+   <View style={st.quick}><Text style={st.section}>Últimas OS</Text>{(d?.recentes||[]).length===0?<Text style={st.sub}>Nenhuma OS registrada.</Text>:(d.recentes||[]).map((o:any)=><View key={o.id} style={st.os}><View style={st.osIcon}><Feather name="briefcase" size={16} color={C.navy}/></View><View style={{flex:1}}><Text style={st.rowTitle}>OS #{o.id}</Text><Text style={st.rowSub}>{o.cliente_nome||'Cliente'} · {o.status}</Text></View></View>)}</View>
+   </>}
+ </ScrollView>
+}
+const st=StyleSheet.create({container:{padding:18,paddingBottom:35},header:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:20},kicker:{fontSize:11,fontWeight:'800',letterSpacing:1,color:C.accent},title:{fontSize:25,fontWeight:'900',color:C.ink,marginTop:4},sub:{fontSize:13,color:C.muted,marginTop:5},avatar:{width:46,height:46,borderRadius:16,backgroundColor:C.navy,alignItems:'center',justifyContent:'center'},grid:{flexDirection:'row',flexWrap:'wrap',gap:10,marginBottom:16},stat:{width:'48%',backgroundColor:C.card,borderRadius:18,padding:15,borderWidth:1,borderColor:C.line},icon:{width:32,height:32,borderRadius:10,alignItems:'center',justifyContent:'center',marginBottom:12},value:{fontSize:24,fontWeight:'900',color:C.ink},label:{fontSize:12,color:C.muted,fontWeight:'700',marginTop:2},quick:{backgroundColor:C.card,borderRadius:20,padding:18,borderWidth:1,borderColor:C.line,marginBottom:14},section:{fontSize:16,fontWeight:'900',color:C.ink,marginBottom:13},row:{flexDirection:'row',alignItems:'center',gap:12},rowTitle:{fontSize:14,fontWeight:'800',color:C.ink},rowSub:{fontSize:12,color:C.muted,marginTop:3},badge:{minWidth:30,paddingHorizontal:9,paddingVertical:5,borderRadius:14,backgroundColor:'#EAF2FF',color:C.accent,textAlign:'center',fontWeight:'900'},os:{flexDirection:'row',alignItems:'center',gap:11,paddingVertical:10,borderTopWidth:1,borderTopColor:C.line},osIcon:{width:34,height:34,borderRadius:10,backgroundColor:'#EEF2F7',alignItems:'center',justifyContent:'center'},loading:{alignItems:'center',padding:40,gap:12}});

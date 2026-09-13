@@ -9,12 +9,10 @@ import { useAuthContext } from "@/hooks/useAuth";
 import { useCadastros } from "@/hooks/useCadastros";
 import { useDespesasOS } from "@/hooks/useDespesasOS";
 import { useLocationTracking } from "@/hooks/useLocationTracking";
-import { useMateriaisOS } from "@/hooks/useMateriaisOS";
 import { useMinhasOS } from "@/hooks/useMinhasOS";
 import { useOrdemServico } from "@/hooks/useOrdemServico";
 
 import { AbaDespesas } from "@/components/os/AbaDespesas";
-import { AbaMateriais } from "@/components/os/AbaMateriais";
 import { AbaServico } from "@/components/os/AbaServico";
 import { AssinaturaModal } from "@/components/os/AssinaturaModal";
 import { NovaOSCard } from "@/components/os/NovaOSCard";
@@ -48,7 +46,6 @@ export default function HomeScreen() {
   const cadastros = useCadastros();
   const { minhasOS, carregandoMinhasOS, buscarMinhasOS } = useMinhasOS(tecnicoSel?.id);
   const osAtual = useOrdemServico();
-  const materiaisOS = useMateriaisOS();
   const despesasOS = useDespesasOS();
   const { online, pendentes, sincronizando, sincronizarAgora } = useSincronizacaoOffline();
 
@@ -71,20 +68,17 @@ export default function HomeScreen() {
 
   function handleRetomarOS(os: any) {
     const id = osAtual.abrirOS(os);
-    materiaisOS.buscarMateriaisSolicitados(id);
     despesasOS.buscarDespesas(id);
   }
 
   function handleCriarOS() {
     osAtual.criarOS({ tecnicoSel, clienteSel, gestorSel }, () => {
-      materiaisOS.resetMateriaisSolicitados();
       despesasOS.resetDespesas();
     });
   }
 
-  function handleMudarAba(aba: "servico" | "materiais" | "despesas") {
+  function handleMudarAba(aba: "servico" | "despesas") {
     osAtual.setAbaOS(aba);
-    if (aba === "materiais" && osAtual.osId) materiaisOS.buscarMateriaisSolicitados(osAtual.osId);
     if (aba === "despesas" && osAtual.osId) despesasOS.buscarDespesas(osAtual.osId);
   }
 
@@ -94,7 +88,6 @@ export default function HomeScreen() {
         setClienteSel(null);
         setGestorSel(null);
       }
-      materiaisOS.resetMateriaisSolicitados();
       despesasOS.resetDespesas();
       if (tecnicoSel) buscarMinhasOS(tecnicoSel.id);
     });
@@ -187,18 +180,6 @@ export default function HomeScreen() {
             />
           )}
 
-          {osAtual.abaOS === "materiais" && (
-            <AbaMateriais
-              materialSel={materiaisOS.materialSel}
-              onAbrirModalMaterial={() => materiaisOS.setModalMaterial(true)}
-              quantidadeMaterial={materiaisOS.quantidadeMaterial}
-              onMudarQuantidade={materiaisOS.setQuantidadeMaterial}
-              enviandoMaterial={materiaisOS.enviandoMaterial}
-              onSolicitarMaterial={() => materiaisOS.solicitarMaterial(osAtual.osId)}
-              materiaisSolicitados={materiaisOS.materiaisSolicitados}
-            />
-          )}
-
           {osAtual.abaOS === "despesas" && (
             <AbaDespesas
               tipoDespesa={despesasOS.tipoDespesa}
@@ -269,21 +250,6 @@ export default function HomeScreen() {
           />
         </>
       )}
-
-      <SelectionModal
-        visible={materiaisOS.modalMaterial}
-        title="Materiais"
-        items={cadastros.materiais}
-        emptyMessage="Nenhum material cadastrado. Peça ao gestor para cadastrar no painel web."
-        keyExtractor={(m) => m.id}
-        renderLabel={(m) => (
-          <>
-            {m.nome} <Text style={{ color: "#8a94a6" }}>({m.unidade})</Text>
-          </>
-        )}
-        onSelect={(m) => { materiaisOS.setMaterialSel(m); materiaisOS.setModalMaterial(false); }}
-        onClose={() => materiaisOS.setModalMaterial(false)}
-      />
 
       <AssinaturaModal
         visible={modalAssinatura}

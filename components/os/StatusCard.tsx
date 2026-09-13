@@ -91,7 +91,6 @@ export function StatusCard({
       <View style={styles.tabBar}>
         {[
           { key: "servico" as const, label: "Serviço", icon: "tool" as const },
-          { key: "materiais" as const, label: "Materiais", icon: "package" as const },
           { key: "despesas" as const, label: "Despesas", icon: "file-text" as const },
         ].map((aba) => (
           <TouchableOpacity
