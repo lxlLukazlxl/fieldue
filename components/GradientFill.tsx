@@ -16,7 +16,7 @@ export function GradientFill({ colors }: Props) {
       colors={colors}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
-      style={StyleSheet.absoluteFillObject}
+      style={StyleSheet.absoluteFill}
     />
   );
 }
