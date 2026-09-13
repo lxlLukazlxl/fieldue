@@ -9,8 +9,8 @@ const API_BASE = "";
 // V2 está migrando de API Key compartilhada para autenticação por usuário/token.
 // Não coloque segredos neste arquivo: ele é enviado ao navegador.
 function apiHeaders(extra) {
-  return Object.assign(
-    { "Content-Type": "application/json" },
-    extra || {},
-  );
+  const headers = { "Content-Type": "application/json" };
+  const token = localStorage.getItem("fielduo_gestao_token");
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return Object.assign(headers, extra || {});
 }
