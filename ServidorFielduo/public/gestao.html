@@ -92,9 +92,37 @@
     @media(max-width:900px){aside{width:190px}.grid{grid-template-columns:repeat(2,1fr)}.detail{grid-template-columns:1fr}}
     @media(max-width:650px){body{display:block}aside{width:100%;height:auto;position:static}.grid{grid-template-columns:1fr 1fr}main{padding:16px}table{font-size:13px}.hide-mobile{display:none}}
     #map{height:480px;width:100%;border-radius:var(--radius-lg);margin-bottom:16px;border:1px solid var(--line)}
+
+    .login-overlay{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:
+      radial-gradient(880px 420px at 100% -8%, rgba(255,122,41,.14), transparent 60%),
+      linear-gradient(190deg,var(--navy),var(--ink))}
+    .login-card{width:340px;max-width:90vw;background:var(--card);border-radius:var(--radius-xl);padding:30px 28px;box-shadow:var(--shadow-lg);text-align:center}
+    .login-mark{width:56px;height:56px;border-radius:16px;margin:0 auto 14px;background:linear-gradient(135deg,var(--accent),var(--accent-ink));display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(255,122,41,.4)}
+    .login-card h1{font-size:21px;margin:0 0 2px;font-weight:700;color:var(--ink)}
+    .login-card .muted{margin-bottom:20px}
+    .login-card .input-form{text-align:left}
+    .login-erro{color:var(--danger);font-size:13px;font-weight:600;margin:4px 0 10px;min-height:16px}
+    .btn-full{width:100%;justify-content:center;padding:12px;font-size:14px;margin-top:6px}
+    .user-chip{display:flex;align-items:center;gap:9px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 12px;box-shadow:var(--shadow)}
+    .user-chip .av{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--navy-2),var(--navy));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12.5px;flex-shrink:0}
+    .user-chip .nome{font-size:13px;font-weight:700;color:var(--ink);line-height:1.2}
+    .user-chip .perfil{font-size:11px;color:var(--muted)}
+    .user-chip button{border:0;background:none;cursor:pointer;color:var(--muted);padding:4px;border-radius:8px;display:flex}
+    .user-chip button:hover{background:var(--danger-soft);color:var(--danger)}
   </style>
 </head>
 <body>
+<div id="login-overlay" class="login-overlay" style="display:none">
+  <div class="login-card">
+    <div class="login-mark"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 1 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4z"/><path d="M18 6l1.5-1.5"/></svg></div>
+    <h1>Fielduo</h1>
+    <div class="muted">Entre com seu e-mail e senha</div>
+    <input id="login-email" class="input-form" type="email" placeholder="E-mail" autocomplete="username"/>
+    <input id="login-senha" class="input-form" type="password" placeholder="Senha" autocomplete="current-password" onkeydown="if(event.key==='Enter')fazerLogin()"/>
+    <div id="login-erro" class="login-erro"></div>
+    <button class="btn orange btn-full" onclick="fazerLogin()">Entrar</button>
+  </div>
+</div>
 <aside>
   <div class="brand">
     <span class="brand-mark"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 1 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4z"/><path d="M18 6l1.5-1.5"/></svg></span>
@@ -104,12 +132,11 @@
   <div class="nav" data-tab="relatorios"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6l1 3H8z"/><rect x="5" y="5" width="14" height="17" rx="2"/><path d="M9 12h6M9 16h6"/></svg>Ordens de Serviço</div>
   <div class="nav" data-tab="cadastros"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="18" cy="8.5" r="2.4"/><path d="M16 14.2c2.6.4 4.5 2.4 4.5 5.3"/></svg>Cadastros</div>
   <div class="nav" data-tab="usuarios"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2.2"/><path d="M5.5 17c.6-2 2-3 3.5-3s2.9 1 3.5 3"/><path d="M14.5 8.5h4M14.5 12h4"/></svg>Usuários</div>
-  <div class="nav" data-tab="materiais-solicitados"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9 6-9-6 9-6 9 6z"/><path d="M3 8v8l9 6 9-6V8"/></svg>Solicitações de Material</div>
   <div class="nav" data-tab="rastreamento"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.1 7-11.5a7 7 0 0 0-14 0C5 14.9 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.4"/></svg>Rastreamento</div>
   <div class="sidebar-foot">Fielduo v1.2 &middot; Gestão de campo</div>
 </aside>
 <main>
-  <div class="top"><div><h1 id="titulo">Dashboard</h1><div class="muted">Gestão local das ordens de serviço</div></div><button class="btn blue" onclick="atualizarTudo()">↻ Atualizar</button></div>
+  <div class="top"><div><h1 id="titulo">Dashboard</h1><div class="muted">Gestão local das ordens de serviço</div></div><div style="display:flex;align-items:center;gap:12px"><button class="btn blue" onclick="atualizarTudo()">↻ Atualizar</button><div id="user-chip" class="user-chip" style="display:none"><span class="av" id="user-av"></span><div><div class="nome" id="user-nome"></div><div class="perfil" id="user-perfil"></div></div><button onclick="fazerLogout()" title="Sair"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></button></div></div></div>
 
   <section id="tab-dashboard" class="tab active">
     <div class="grid"><div class="stat"><small>Total de OS</small><strong id="st-os">—</strong></div><div class="stat"><small>OS hoje</small><strong id="st-hoje">—</strong></div><div class="stat"><small>Técnicos</small><strong id="st-tec">—</strong></div><div class="stat"><small>Clientes</small><strong id="st-cli">—</strong></div><div class="stat"><small>Gestores</small><strong id="st-ges">—</strong></div></div>
@@ -147,8 +174,6 @@
     </div>
   </section>
 
-
-  <section id="tab-materiais-solicitados" class="tab"><div class="card"><div class="toolbar"><button class="btn blue" onclick="carregarSolicitacoesMaterial()">Atualizar solicitações</button></div><table><thead><tr><th>Data</th><th>Técnico</th><th>Cliente</th><th>Material</th><th>Quantidade</th><th>Status</th><th>Ação</th></tr></thead><tbody id="corpo-solicitacoes-material"></tbody></table></div></section>
   <section id="tab-rastreamento" class="tab"><div class="card"><h2>Última localização dos técnicos</h2><div id="map"></div><table><thead><tr><th>Técnico</th><th>Latitude</th><th>Longitude</th><th>Última atualização</th></tr></thead><tbody id="corpo-pontos"></tbody></table></div></section>
 </main>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -163,12 +188,12 @@ function initMap(){
 }
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const fmt=v=>v?new Date(v).toLocaleString('pt-BR'):'—';
-async function json(url,opts={}){const r=await fetch(url,opts);const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.erro||`Erro HTTP ${r.status}`);return d;}
+async function json(url,opts={}){const r=await fetch(url,opts);const d=await r.json().catch(()=>({}));if(r.status===401){sessaoExpirada();throw new Error(d.erro||"Sessão expirada. Faça login novamente.");}if(!r.ok)throw new Error(d.erro||`Erro HTTP ${r.status}`);return d;}
 function statusBadge(status){const mapa={ABERTA:'navy',ATRIBUIDA:'navy',ACEITA:'accent',EM_DESLOCAMENTO:'accent',NO_LOCAL:'accent',EM_ATENDIMENTO:'accent',EM_ALMOCO:'warning',FINALIZADA:'success',CANCELADA:'danger'};const cor=mapa[status]||'navy';const label=({ABERTA:'Aberta',ATRIBUIDA:'Atribuída',ACEITA:'Aceita',EM_DESLOCAMENTO:'Em deslocamento',NO_LOCAL:'No local',EM_ATENDIMENTO:'Em atendimento',EM_ALMOCO:'Em almoço',FINALIZADA:'Finalizada',CANCELADA:'Cancelada'})[status]||status;return `<span class="badge badge-${cor}">${esc(label)}</span>`}
-function showTab(t){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav').forEach(x=>x.classList.remove('active'));document.getElementById('tab-'+t).classList.add('active');document.querySelector(`.nav[data-tab="${t}"]`).classList.add('active');document.getElementById('titulo').textContent={dashboard:'Dashboard',relatorios:'Ordens de Serviço',cadastros:'Cadastros',usuarios:'Usuários',rastreamento:'Rastreamento','materiais-solicitados':'Solicitações de Material'}[t];if(t==='relatorios')carregarOS();if(t==='usuarios')carregarUsuarios();if(t==='rastreamento'){initMap();carregarPontos();setTimeout(()=>map&&map.invalidateSize(),100);}if(t==='materiais-solicitados')carregarSolicitacoesMaterial();}
+function showTab(t){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav').forEach(x=>x.classList.remove('active'));document.getElementById('tab-'+t).classList.add('active');document.querySelector(`.nav[data-tab="${t}"]`).classList.add('active');document.getElementById('titulo').textContent={dashboard:'Dashboard',relatorios:'Ordens de Serviço',cadastros:'Cadastros',usuarios:'Usuários',rastreamento:'Rastreamento'}[t];if(t==='relatorios')carregarOS();if(t==='usuarios')carregarUsuarios();if(t==='rastreamento'){initMap();carregarPontos();setTimeout(()=>map&&map.invalidateSize(),100);}}
 document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>showTab(n.dataset.tab));
-async function resumo(){try{const d=await json(`${API}/gestao/resumo`);['os','hoje','tec','cli','ges'].forEach((k,i)=>document.getElementById(['st-os','st-hoje','st-tec','st-cli','st-ges'][i]).textContent=[d.ordens,d.ordensHoje,d.tecnicos,d.clientes,d.gestores][i]);}catch(e){console.error(e)}}
-async function carregarOS(){try{listaOS=await json(`${API}/gestao/relatorios?limite=500`);renderOS();renderDashboardOS();}catch(e){alert(e.message)}}
+async function resumo(){try{const d=await json(`${API}/gestao/resumo`,{headers:apiHeaders()});['os','hoje','tec','cli','ges'].forEach((k,i)=>document.getElementById(['st-os','st-hoje','st-tec','st-cli','st-ges'][i]).textContent=[d.ordens,d.ordensHoje,d.tecnicos,d.clientes,d.gestores][i]);}catch(e){console.error(e)}}
+async function carregarOS(){try{listaOS=await json(`${API}/gestao/relatorios?limite=500`,{headers:apiHeaders()});renderOS();renderDashboardOS();}catch(e){alert(e.message)}}
 function renderOS(){const q=(document.getElementById('busca-os')?.value||'').toLowerCase();const arr=listaOS.filter(o=>`${o.id} ${o.tecnico_nome} ${o.cliente_nome} ${o.gestor_nome} ${o.status}`.toLowerCase().includes(q));document.getElementById('corpo-tabela-os').innerHTML=arr.length?arr.map(o=>`<tr><td>#${o.id}</td><td>${fmt(o.criada_data||o.fim_data)}</td><td>${esc(o.tecnico_nome)}</td><td>${esc(o.cliente_nome)}</td><td>${statusBadge(o.status)}</td><td><button class="btn blue" onclick="visualizarOS(${o.id})">Ver</button> ${acaoStatus(o)}</td></tr>`).join(''):`<tr><td colspan="6" class="empty">Nenhuma OS encontrada.</td></tr>`}
 function acaoStatus(o){const map={ATRIBUIDA:["ACEITA","Aceitar"],ACEITA:["EM_DESLOCAMENTO","Iniciar deslocamento"],EM_DESLOCAMENTO:["NO_LOCAL","Cheguei"],NO_LOCAL:["EM_ATENDIMENTO","Iniciar atendimento"]};const a=map[o.status];return a?`<button class="btn orange" onclick="avancarOS(${o.id},'${a[0]}')">${a[1]}</button>`:""}
 async function avancarOS(id,status){try{await json(`${API}/servico/${id}/status`,{method:'POST',headers:apiHeaders(),body:JSON.stringify({status})});await carregarOS();resumo();}catch(e){alert(e.message)}}
@@ -197,12 +222,15 @@ async function salvarUsuario(){const id=document.getElementById('edit-id-usr').v
 function editarUsuario(u){document.getElementById('edit-id-usr').value=u.id;document.getElementById('nome_usr').value=u.nome||'';document.getElementById('email_usr').value=u.email||'';document.getElementById('email_usr').disabled=true;document.getElementById('senha_usr').value='';document.getElementById('senha_usr').placeholder='Nova senha (deixe em branco para não alterar)';document.getElementById('perfil_usr').value=u.perfil;document.getElementById('colaborador_usr').value=u.colaborador_id||'';toggleColaboradorUsr();document.getElementById('form-titulo-usr').textContent='Editando usuário';document.getElementById('btn-cancelar-usr').style.display='inline-block';window.scrollTo({top:0,behavior:'smooth'})}
 function limparFormUsuario(){document.getElementById('edit-id-usr').value='';document.getElementById('nome_usr').value='';document.getElementById('email_usr').value='';document.getElementById('email_usr').disabled=false;document.getElementById('senha_usr').value='';document.getElementById('senha_usr').placeholder='Senha (mínimo 8 caracteres)';document.getElementById('perfil_usr').value='TECNICO';document.getElementById('colaborador_usr').value='';toggleColaboradorUsr();document.getElementById('form-titulo-usr').textContent='Novo usuário';document.getElementById('btn-cancelar-usr').style.display='none'}
 async function alternarAtivoUsuario(id,ativo){try{await json(`${API}/auth/usuarios/${id}`,{method:'PATCH',headers:apiHeaders(),body:JSON.stringify({ativo})});carregarUsuarios()}catch(e){alert(e.message)}}
-
-function statusMaterialBadge(status){const m={SOLICITADO:'warning',APROVADO:'accent',SEPARADO:'navy',ENTREGUE:'success',CANCELADO:'danger'};return `<span class="badge badge-${m[status]||'navy'}">${esc(status)}</span>`}
-async function carregarSolicitacoesMaterial(){try{const d=await json(`${API}/materiais/solicitacoes`,{headers:apiHeaders()});document.getElementById('corpo-solicitacoes-material').innerHTML=d.length?d.map(x=>`<tr><td>${fmt(x.criado_em)}</td><td>${esc(x.tecnico_nome)}</td><td>${esc(x.cliente_nome)}</td><td><b>${esc(x.material_nome)}</b><br><span class="muted">${esc(x.unidade)}</span></td><td>${x.quantidade} ${esc(x.unidade)}</td><td>${statusMaterialBadge(x.status)}</td><td class="actions">${x.status==='SOLICITADO'?`<button class="btn green" onclick="statusSolicitacaoMaterial(${x.id},'APROVADO')">Aprovar</button>`:''}${['SOLICITADO','APROVADO'].includes(x.status)?`<button class="btn blue" onclick="statusSolicitacaoMaterial(${x.id},'SEPARADO')">Separado</button>`:''}${x.status==='SEPARADO'?`<button class="btn green" onclick="statusSolicitacaoMaterial(${x.id},'ENTREGUE')">Entregue</button>`:''}</td></tr>`).join(''):`<tr><td colspan="7" class="empty">Nenhuma solicitação de material.</td></tr>`}catch(e){alert(e.message)}}
-async function statusSolicitacaoMaterial(id,status){try{await json(`${API}/materiais/solicitacoes/${id}`,{method:'PATCH',headers:apiHeaders(),body:JSON.stringify({status})});carregarSolicitacoesMaterial()}catch(e){alert(e.message)}}
 async function carregarPontos(){try{const d=await json(`${API}/pontos`,{headers:apiHeaders()});document.getElementById('corpo-pontos').innerHTML=d.length?d.map(p=>`<tr><td>${esc(p.tecnico)}</td><td>${Number(p.latitude).toFixed(6)}</td><td>${Number(p.longitude).toFixed(6)}</td><td>${fmt(p.dataHora)}</td></tr>`).join(''):`<tr><td colspan="4" class="empty">Nenhuma localização recebida.</td></tr>`;if(map){marcadores.forEach(m=>map.removeLayer(m));marcadores=d.map(p=>L.marker([p.latitude,p.longitude]).addTo(map).bindPopup(`<b>${esc(p.tecnico)}</b><br>${fmt(p.dataHora)}`));if(d.length)map.setView([d[0].latitude,d[0].longitude],13);}}catch(e){alert(e.message)}}
 async function atualizarTudo(){await Promise.all([resumo(),carregarOS()]);}
-window.onload=()=>{atualizarTudo();listar('colaboradores');setInterval(()=>{if(map)carregarPontos();},30000);};
+function mostrarLogin(msg){document.getElementById('login-overlay').style.display='flex';document.getElementById('user-chip').style.display='none';document.getElementById('login-erro').textContent=msg||'';document.getElementById('login-senha').value='';}
+function esconderLogin(){document.getElementById('login-overlay').style.display='none';}
+function mostrarUsuarioLogado(u){document.getElementById('user-chip').style.display='flex';document.getElementById('user-nome').textContent=u.nome;document.getElementById('user-perfil').textContent={ADMIN:'Administrador',GESTOR:'Gestor',TECNICO:'Técnico'}[u.perfil]||u.perfil;document.getElementById('user-av').textContent=(u.nome||'?').trim().charAt(0).toUpperCase();}
+function sessaoExpirada(){localStorage.removeItem('fielduo_gestao_token');localStorage.removeItem('fielduo_gestao_usuario');mostrarLogin('Sessão expirada. Faça login novamente.');}
+async function fazerLogin(){const email=document.getElementById('login-email').value.trim();const senha=document.getElementById('login-senha').value;const erroEl=document.getElementById('login-erro');if(!email||!senha){erroEl.textContent='Informe e-mail e senha.';return;}erroEl.textContent='';try{const r=await fetch(`${API}/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,senha})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.erro||'Não foi possível entrar.');localStorage.setItem('fielduo_gestao_token',d.token);localStorage.setItem('fielduo_gestao_usuario',JSON.stringify(d.usuario));esconderLogin();mostrarUsuarioLogado(d.usuario);iniciarPainel();}catch(e){erroEl.textContent=e.message;}}
+function fazerLogout(){localStorage.removeItem('fielduo_gestao_token');localStorage.removeItem('fielduo_gestao_usuario');location.reload();}
+function iniciarPainel(){atualizarTudo();listar('colaboradores');setInterval(()=>{if(map)carregarPontos();},30000);}
+window.onload=async()=>{const token=localStorage.getItem('fielduo_gestao_token');const usuarioSalvo=localStorage.getItem('fielduo_gestao_usuario');if(!token||!usuarioSalvo){mostrarLogin();return;}try{const r=await fetch(`${API}/auth/me`,{headers:apiHeaders()});if(!r.ok)throw new Error();const d=await r.json();mostrarUsuarioLogado(d.usuario);localStorage.setItem('fielduo_gestao_usuario',JSON.stringify(d.usuario));esconderLogin();iniciarPainel();}catch(e){sessaoExpirada();}};
 </script>
 </body></html>
