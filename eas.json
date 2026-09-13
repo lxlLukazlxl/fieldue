@@ -8,19 +8,19 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://SEU-DOMINIO-DA-API"
+        "EXPO_PUBLIC_API_URL": "https://fielduo.onrender.com"
       }
     },
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://SEU-DOMINIO-DA-API"
+        "EXPO_PUBLIC_API_URL": "https://fielduo.onrender.com"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://SEU-DOMINIO-DA-API"
+        "EXPO_PUBLIC_API_URL": "https://fielduo.onrender.com"
       }
     }
   },
