@@ -7,6 +7,12 @@
     "icon": "./assets/images/icon.png",
     "scheme": "fielduo",
     "userInterfaceStyle": "automatic",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/decd62e8-1dc6-4cee-a1ef-112499db1d40"
+    },
     "ios": {
       "supportsTablet": true
     },

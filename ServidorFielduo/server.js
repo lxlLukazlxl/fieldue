@@ -330,16 +330,67 @@ async function registrarStatus(servicoId, status, conn = db) {
 app.get("/", (_req,res) => res.json({ nome:"Fielduo", status:"online", versao:VERSAO, autenticacao:"JWT" }));
 app.get("/health", async (_req,res) => { try { await db.query("SELECT 1 AS ok"); res.json({status:"ok",banco:"online",versao:VERSAO,data:new Date().toISOString()}); } catch(err) { res.status(503).json({status:"degraded",banco:"offline"}); } });
 
+// Rate limit do login, em memória — sem depender de nenhuma lib nova.
+// Duas travas independentes: por IP (freia varredura ampla) e por e-mail
+// (freia ataque direcionado a uma conta, mesmo trocando de IP). Zera no
+// primeiro login bem-sucedido daquela chave.
+const JANELA_LOGIN_MS = 15 * 60 * 1000; // 15 minutos
+const LIMITE_LOGIN_IP = 20;
+const LIMITE_LOGIN_EMAIL = 6;
+const tentativasLoginPorIp = new Map();
+const tentativasLoginPorEmail = new Map();
+
+function checarLimite(mapa, chave, limite) {
+  const agora = Date.now();
+  const registro = mapa.get(chave);
+  if (!registro || agora - registro.desde > JANELA_LOGIN_MS) {
+    mapa.set(chave, { contagem: 0, desde: agora });
+    return { bloqueado: false };
+  }
+  if (registro.contagem >= limite) {
+    const restanteMs = JANELA_LOGIN_MS - (agora - registro.desde);
+    return { bloqueado: true, restanteMin: Math.ceil(restanteMs / 60000) };
+  }
+  return { bloqueado: false };
+}
+function registrarFalha(mapa, chave) {
+  const registro = mapa.get(chave);
+  if (registro) registro.contagem++;
+  else mapa.set(chave, { contagem: 1, desde: Date.now() });
+}
+function limparTentativas(mapa, chave) { mapa.delete(chave); }
+// Limpeza periódica pra não crescer pra sempre em memória.
+setInterval(() => {
+  const agora = Date.now();
+  for (const [chave, r] of tentativasLoginPorIp) if (agora - r.desde > JANELA_LOGIN_MS) tentativasLoginPorIp.delete(chave);
+  for (const [chave, r] of tentativasLoginPorEmail) if (agora - r.desde > JANELA_LOGIN_MS) tentativasLoginPorEmail.delete(chave);
+}, 5 * 60 * 1000).unref?.();
+
 app.post("/auth/login", async (req,res) => {
   const email = normalizarEmail(req.body.email);
   const senha = String(req.body.senha || req.body.password || "");
   if (!email || !senha) return res.status(400).json({erro:"E-mail e senha são obrigatórios."});
+
+  const ip = req.ip || "desconhecido";
+  const limiteIp = checarLimite(tentativasLoginPorIp, ip, LIMITE_LOGIN_IP);
+  const limiteEmail = checarLimite(tentativasLoginPorEmail, email, LIMITE_LOGIN_EMAIL);
+  if (limiteIp.bloqueado || limiteEmail.bloqueado) {
+    const min = Math.max(limiteIp.restanteMin || 0, limiteEmail.restanteMin || 0);
+    return res.status(429).json({erro:`Muitas tentativas de login. Tente novamente em cerca de ${min} minuto(s).`});
+  }
+
   try {
     const empresaId = validarId(req.body.empresa_id) ? Number(req.body.empresa_id) : null;
     const [usuarios] = await db.query(`SELECT u.id,u.empresa_id,u.nome,u.email,u.senha_hash,u.perfil,u.colaborador_id,u.ativo,e.nome AS empresa_nome FROM usuarios u JOIN empresas e ON e.id=u.empresa_id WHERE u.email=? AND u.ativo=1 AND e.ativo=1 ${empresaId ? "AND u.empresa_id=?" : ""} ORDER BY u.id`, empresaId ? [email,empresaId] : [email]);
     if (usuarios.length > 1 && !empresaId) return res.status(409).json({erro:"Este e-mail pertence a mais de uma empresa. Informe empresa_id para entrar."});
     const usuario = usuarios[0];
-    if (!usuario || !(await verificarSenha(senha,usuario.senha_hash))) return res.status(401).json({erro:"E-mail ou senha inválidos."});
+    if (!usuario || !(await verificarSenha(senha,usuario.senha_hash))) {
+      registrarFalha(tentativasLoginPorIp, ip);
+      registrarFalha(tentativasLoginPorEmail, email);
+      return res.status(401).json({erro:"E-mail ou senha inválidos."});
+    }
+    limparTentativas(tentativasLoginPorIp, ip);
+    limparTentativas(tentativasLoginPorEmail, email);
     await db.query("UPDATE usuarios SET ultimo_login=NOW() WHERE id=?",[usuario.id]);
     const token = gerarToken({sub:usuario.id,empresa_id:usuario.empresa_id,perfil:usuario.perfil,email:usuario.email});
     res.json({token,tipo:"Bearer",usuario:{id:usuario.id,nome:usuario.nome,email:usuario.email,perfil:usuario.perfil,colaborador_id:usuario.colaborador_id,empresa_id:usuario.empresa_id,empresa_nome:usuario.empresa_nome}});
