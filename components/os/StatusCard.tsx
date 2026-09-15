@@ -3,9 +3,9 @@ import React from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 
 import { GradientFill } from "@/components/GradientFill";
-import { AbaOS, Horarios } from "@/lib/osTypes";
+import { Horarios } from "@/lib/osTypes";
 import { coresStatus, formatarHora, labelsStatus, proximaAcao } from "@/lib/statusOS";
-import { COLORS, GRADIENTS, styles } from "./styles";
+import { GRADIENTS, styles } from "./styles";
 
 type Props = {
   osId: number | null;
@@ -15,14 +15,11 @@ type Props = {
   onMudarStatus: (status: string) => void;
   onIniciarAlmoco: () => void;
   onFinalizarAlmoco: () => void;
-  abaOS: AbaOS;
-  onMudarAba: (aba: AbaOS) => void;
 };
 
 export function StatusCard({
   osId, statusOS, horarios,
   carregandoAlmoco, onMudarStatus, onIniciarAlmoco, onFinalizarAlmoco,
-  abaOS, onMudarAba,
 }: Props) {
   return (
     <>
@@ -87,22 +84,6 @@ export function StatusCard({
           )}
         </View>
       )}
-
-      <View style={styles.tabBar}>
-        {[
-          { key: "servico" as const, label: "Serviço", icon: "tool" as const },
-          { key: "despesas" as const, label: "Despesas", icon: "file-text" as const },
-        ].map((aba) => (
-          <TouchableOpacity
-            key={aba.key}
-            style={[styles.tabBtn, abaOS === aba.key && styles.tabBtnAtiva]}
-            onPress={() => onMudarAba(aba.key)}
-          >
-            <Feather name={aba.icon} size={14} color={abaOS === aba.key ? COLORS.ink : COLORS.muted} />
-            <Text style={[styles.tabBtnText, abaOS === aba.key && styles.tabBtnTextAtiva]}>{aba.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
     </>
   );
 }

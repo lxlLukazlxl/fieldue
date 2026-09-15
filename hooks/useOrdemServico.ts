@@ -3,8 +3,9 @@ import { useState } from "react";
 import { Alert } from "react-native";
 
 import { API_URL, apiHeaders } from "@/constants/api";
+import { fetchComRetentativa } from "@/lib/httpRetry";
 import { executarOuEnfileirar } from "@/lib/offlineQueue";
-import { AbaOS, Horarios } from "@/lib/osTypes";
+import { Horarios } from "@/lib/osTypes";
 
 type Selecao = { tecnicoSel: any; clienteSel: any; gestorSel: any };
 
@@ -18,7 +19,6 @@ export function useOrdemServico() {
   const [osId, setOsId] = useState<number | null>(null);
   const [statusOS, setStatusOS] = useState<string | null>(null);
   const [horarios, setHorarios] = useState<Horarios>({});
-  const [abaOS, setAbaOS] = useState<AbaOS>("servico");
 
   const [fotos, setFotos] = useState<string[]>([]);
   const [relatorio, setRelatorio] = useState("");
@@ -28,6 +28,9 @@ export function useOrdemServico() {
   const [criandoOS, setCriandoOS] = useState(false);
   const [carregando, setCarregando] = useState(false);
   const [carregandoAlmoco, setCarregandoAlmoco] = useState(false);
+  // Mostrado na tela durante uma nova tentativa automática (ex.: servidor
+  // "acordando" no Render), pra o técnico entender que não travou.
+  const [mensagemEnvio, setMensagemEnvio] = useState<string | null>(null);
 
   async function buscarHorarios(id: number) {
     try {
@@ -53,7 +56,6 @@ export function useOrdemServico() {
   function abrirOS(os: any) {
     setOsId(os.id);
     setStatusOS(os.status);
-    setAbaOS("servico");
     setFotos([]);
     buscarHorarios(os.id);
     setEtapa(2);
@@ -92,21 +94,23 @@ export function useOrdemServico() {
   async function criarOS({ tecnicoSel, clienteSel, gestorSel }: Selecao, aoCriar?: () => void) {
     if (!tecnicoSel || !clienteSel || !gestorSel) return Alert.alert("Aviso", "Preencha Técnico, Cliente e Gestor.");
     setCriandoOS(true);
+    setMensagemEnvio(null);
     try {
-      const response = await fetch(`${API_URL}/servico/criar`, {
+      const response = await fetchComRetentativa(`${API_URL}/servico/criar`, {
         method: "POST", headers: apiHeaders(),
         body: JSON.stringify({ tecnico_id: tecnicoSel.id, cliente_id: clienteSel.id, gestor_id: gestorSel.id }),
+      }, {
+        aoTentarNovamente: () => setMensagemEnvio("Servidor demorando a responder — tentando de novo..."),
       });
       const dados = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(dados.erro || "Não foi possível criar a OS.");
       setOsId(Number(dados.id));
       setStatusOS(dados.status);
-      setAbaOS("servico");
-      setEtapa(2);
+        setEtapa(2);
       aoCriar?.();
       Alert.alert("OS criada", `OS #${dados.id} criada e atribuída ao técnico.`);
-    } catch (e: any) { Alert.alert("Erro", e.message || "Falha ao criar a OS."); }
-    finally { setCriandoOS(false); }
+    } catch (e: any) { Alert.alert("Erro", e.message || "Falha ao criar a OS. Confira sua conexão e tente novamente."); }
+    finally { setCriandoOS(false); setMensagemEnvio(null); }
   }
 
   async function mudarStatus(status: string) {
@@ -181,8 +185,9 @@ export function useOrdemServico() {
       );
 
     setCarregando(true);
+    setMensagemEnvio(null);
     try {
-      const response = await fetch(
+      const response = await fetchComRetentativa(
         `${API_URL}/servico/finalizar`,
         {
           method: "POST",
@@ -198,6 +203,7 @@ export function useOrdemServico() {
             cliente_assinatura: assinaturaBase64,
           }),
         },
+        { aoTentarNovamente: () => setMensagemEnvio("Servidor demorando a responder — tentando de novo, não feche o app...") },
       );
 
       const dados = await response.json().catch(() => ({}));
@@ -214,27 +220,26 @@ export function useOrdemServico() {
         setRelatorio("");
         setNomeClienteFinal("");
         setAssinaturaBase64(null);
-        setAbaOS("servico");
-        aoFinalizar?.();
+            aoFinalizar?.();
       } else {
         Alert.alert("Erro", dados.erro || "O servidor recusou os dados.");
       }
     } catch (e) {
-      Alert.alert("Erro", "Falha ao enviar dados para o servidor.");
+      Alert.alert("Erro", "Não foi possível falar com o servidor depois de várias tentativas. Confira sua conexão — os dados preenchidos continuam na tela, você pode tentar 'Finalizar e Enviar' de novo.");
     } finally {
       setCarregando(false);
+      setMensagemEnvio(null);
     }
   }
 
   return {
     etapa, setEtapa,
     osId, statusOS, horarios,
-    abaOS, setAbaOS,
     fotos, selecionarFotos, removerFoto,
     relatorio, setRelatorio,
     nomeClienteFinal, setNomeClienteFinal,
     assinaturaBase64, setAssinaturaBase64,
-    criandoOS, carregando, carregandoAlmoco,
+    criandoOS, carregando, carregandoAlmoco, mensagemEnvio,
     buscarHorarios, abrirOS,
     criarOS, mudarStatus, iniciarAlmoco, finalizarAlmoco, finalizar,
   };

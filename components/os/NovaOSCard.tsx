@@ -17,6 +17,7 @@ type Props = {
   onAbrirCliente: () => void;
   onAbrirGestor: () => void;
   criandoOS: boolean;
+  mensagemEnvio?: string | null;
   onCriarOS: () => void;
   minhasOS: any[];
   carregandoMinhasOS: boolean;
@@ -27,7 +28,7 @@ export function NovaOSCard({
   podeCriarOS,
   tecnicoSel, clienteSel, gestorSel,
   onAbrirTecnico, onAbrirCliente, onAbrirGestor,
-  criandoOS, onCriarOS,
+  criandoOS, mensagemEnvio, onCriarOS,
   minhasOS, carregandoMinhasOS, onRetomarOS,
 }: Props) {
   return (
@@ -75,6 +76,11 @@ export function NovaOSCard({
             {!criandoOS && <Feather name="plus-circle" size={17} color="#fff" />}
             <Text style={styles.btnText}>{criandoOS ? "CRIANDO OS..." : "CRIAR ORDEM DE SERVIÇO"}</Text>
           </TouchableOpacity>
+          {!!mensagemEnvio && criandoOS && (
+            <Text style={{ marginTop: 10, textAlign: "center", color: COLORS.warning, fontSize: 12.5, fontWeight: "700" }}>
+              {mensagemEnvio}
+            </Text>
+          )}
         </>
       ) : (
         <Text style={styles.title}>Minhas Ordens de Serviço</Text>

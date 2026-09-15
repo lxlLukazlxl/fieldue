@@ -297,6 +297,12 @@ async function inicializarBanco() {
   ];
   for (const [nome,tipo] of servicoCols) if (!(await colunaExiste("servicos",nome))) await db.query(`ALTER TABLE servicos ADD COLUMN ${nome} ${tipo}`);
   if (!(await colunaExiste("despesas","numero_nota"))) await db.query("ALTER TABLE despesas ADD COLUMN numero_nota VARCHAR(100) NULL AFTER descricao");
+  if (!(await colunaExiste("despesas","cliente_id"))) {
+    await db.query("ALTER TABLE despesas ADD COLUMN cliente_id INT NULL AFTER servico_id");
+    await db.query("UPDATE despesas d JOIN servicos s ON s.id=d.servico_id SET d.cliente_id=s.cliente_id WHERE d.cliente_id IS NULL AND d.servico_id IS NOT NULL");
+    try { await db.query("ALTER TABLE despesas MODIFY servico_id INT NULL"); } catch (_) {}
+    try { await db.query("CREATE INDEX idx_despesas_cliente ON despesas (cliente_id)"); } catch (_) {}
+  }
   if (!(await colunaExiste("servico_status_historico","empresa_id"))) await db.query("ALTER TABLE servico_status_historico ADD COLUMN empresa_id INT NULL");
   if (!(await colunaExiste("usuarios","colaborador_id"))) await db.query("ALTER TABLE usuarios ADD COLUMN colaborador_id INT NULL");
   const [[histNull]] = await db.query("SELECT COUNT(*) total FROM servico_status_historico WHERE empresa_id IS NULL");
@@ -568,7 +574,35 @@ app.delete("/servico/materiais/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),as
 const TIPOS_DESPESA_VALIDOS=["PEDAGIO","HOSPEDAGEM","MATERIAL","ALIMENTACAO","COMBUSTIVEL","ESTACIONAMENTO","OUTRO"];
 app.post("/servico/:id/despesas",autenticar,async(req,res)=>{const servicoId=req.params.id;let {tecnico_id,tipo,valor,descricao,numero_nota,foto_recibo,cobrar_do_cliente}=req.body;if(req.auth.perfil==="TECNICO"){tecnico_id=await colaboradorDoUsuario(req);};const tn=String(tipo||"").trim().toUpperCase();if(!validarId(servicoId)||!validarId(tecnico_id))return res.status(400).json({erro:"OS e técnico válidos são obrigatórios."});if(!TIPOS_DESPESA_VALIDOS.includes(tn))return res.status(400).json({erro:`Tipo de despesa inválido. Use um de: ${TIPOS_DESPESA_VALIDOS.join(", ")}.`});const vn=Number(valor);if(!Number.isFinite(vn)||vn<=0)return res.status(400).json({erro:"Valor inválido."});try{const[[s]]=await db.query("SELECT id,tecnico_id FROM servicos WHERE id=? AND empresa_id=?",[servicoId,req.auth.empresaId]);if(s && !(await tecnicoPodeAcessarOS(req,s)))return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});const[[t]]=await db.query("SELECT id FROM colaboradores WHERE id=? AND empresa_id=?",[tecnico_id,req.auth.empresaId]);if(!s||!t)return res.status(404).json({erro:"OS ou técnico não encontrado."});let foto=null;if(foto_recibo){foto=typeof foto_recibo==="string"&&foto_recibo.startsWith("/uploads/")?foto_recibo:salvarFotoBase64(foto_recibo,"recibo");if(!foto)return res.status(400).json({erro:"Foto do recibo inválida ou maior que 5 MB."})}const[r]=await db.query("INSERT INTO despesas (empresa_id,servico_id,tecnico_id,tipo,valor,descricao,numero_nota,foto_recibo,cobrar_do_cliente) VALUES (?,?,?,?,?,?,?,?,?)",[req.auth.empresaId,servicoId,tecnico_id,tn,vn,descricao?String(descricao).trim():null,numero_nota?String(numero_nota).trim():null,foto,cobrar_do_cliente===false||cobrar_do_cliente===0?0:1]);res.status(201).json({id:r.insertId,message:"Despesa registrada com sucesso."})}catch(err){handleDbError(res,err,"Não foi possível registrar a despesa.")}});
 app.get("/servico/:id/despesas",autenticar,async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[[os]]=await db.query("SELECT id,tecnico_id FROM servicos WHERE id=? AND empresa_id=?",[req.params.id,req.auth.empresaId]);if(!os)return res.status(404).json({erro:"OS não encontrada."});if(!(await tecnicoPodeAcessarOS(req,os)))return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});const[rows]=await db.query("SELECT * FROM despesas WHERE servico_id=? AND empresa_id=? ORDER BY criado_em DESC",[req.params.id,req.auth.empresaId]);res.json(rows)}catch(err){handleDbError(res,err)}});
-app.get("/gestao/despesas",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{try{const[rows]=await db.query(`SELECT d.*,s.cliente_id,c.nome cliente_nome,t.nome tecnico_nome FROM despesas d JOIN servicos s ON s.id=d.servico_id AND s.empresa_id=d.empresa_id LEFT JOIN clientes c ON c.id=s.cliente_id AND c.empresa_id=s.empresa_id LEFT JOIN colaboradores t ON t.id=d.tecnico_id AND t.empresa_id=d.empresa_id WHERE d.empresa_id=? ORDER BY d.criado_em DESC LIMIT 500`,[req.auth.empresaId]);res.json(rows)}catch(err){handleDbError(res,err)}});
+
+// Despesa avulsa: não depende de estar dentro de uma OS aberta — o técnico
+// escolhe direto para qual cliente foi o gasto (pedágio, alimentação etc.
+// podem acontecer fora do horário de atendimento de uma OS específica).
+app.post("/despesas",autenticar,async(req,res)=>{
+  let{tecnico_id,cliente_id,tipo,valor,descricao,numero_nota,foto_recibo,cobrar_do_cliente}=req.body;
+  if(req.auth.perfil==="TECNICO"){tecnico_id=await colaboradorDoUsuario(req);}
+  const tn=String(tipo||"").trim().toUpperCase();
+  if(!validarId(tecnico_id)||!validarId(cliente_id))return res.status(400).json({erro:"Técnico e cliente válidos são obrigatórios."});
+  if(!TIPOS_DESPESA_VALIDOS.includes(tn))return res.status(400).json({erro:`Tipo de despesa inválido. Use um de: ${TIPOS_DESPESA_VALIDOS.join(", ")}.`});
+  const vn=Number(valor);if(!Number.isFinite(vn)||vn<=0)return res.status(400).json({erro:"Valor inválido."});
+  try{
+    const[[t]]=await db.query("SELECT id FROM colaboradores WHERE id=? AND empresa_id=?",[tecnico_id,req.auth.empresaId]);
+    const[[c]]=await db.query("SELECT id FROM clientes WHERE id=? AND empresa_id=?",[cliente_id,req.auth.empresaId]);
+    if(!t||!c)return res.status(404).json({erro:"Técnico ou cliente não encontrado."});
+    let foto=null;if(foto_recibo){foto=typeof foto_recibo==="string"&&foto_recibo.startsWith("/uploads/")?foto_recibo:salvarFotoBase64(foto_recibo,"recibo");if(!foto)return res.status(400).json({erro:"Foto do recibo inválida ou maior que 5 MB."})}
+    const[r]=await db.query("INSERT INTO despesas (empresa_id,servico_id,cliente_id,tecnico_id,tipo,valor,descricao,numero_nota,foto_recibo,cobrar_do_cliente) VALUES (?,NULL,?,?,?,?,?,?,?,?)",[req.auth.empresaId,cliente_id,tecnico_id,tn,vn,descricao?String(descricao).trim():null,numero_nota?String(numero_nota).trim():null,foto,cobrar_do_cliente===false||cobrar_do_cliente===0?0:1]);
+    res.status(201).json({id:r.insertId,message:"Despesa registrada com sucesso."});
+  }catch(err){handleDbError(res,err,"Não foi possível registrar a despesa.")}
+});
+app.get("/despesas",autenticar,async(req,res)=>{
+  const c=["d.empresa_id=?"],v=[req.auth.empresaId];
+  if(req.auth.perfil==="TECNICO"){const tid=await colaboradorDoUsuario(req);if(!tid)return res.status(403).json({erro:"Usuário técnico não está vinculado a um colaborador."});c.push("d.tecnico_id=?");v.push(tid);}
+  else if(req.query.tecnico_id){c.push("d.tecnico_id=?");v.push(req.query.tecnico_id);}
+  if(req.query.cliente_id){c.push("d.cliente_id=?");v.push(req.query.cliente_id);}
+  try{const[rows]=await db.query(`SELECT d.*,cl.nome cliente_nome,t.nome tecnico_nome FROM despesas d LEFT JOIN clientes cl ON cl.id=d.cliente_id AND cl.empresa_id=d.empresa_id LEFT JOIN colaboradores t ON t.id=d.tecnico_id AND t.empresa_id=d.empresa_id WHERE ${c.join(" AND ")} ORDER BY d.criado_em DESC LIMIT 200`,v);res.json(rows)}catch(err){handleDbError(res,err)}
+});
+
+app.get("/gestao/despesas",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{try{const[rows]=await db.query(`SELECT d.*,c.nome cliente_nome,t.nome tecnico_nome FROM despesas d LEFT JOIN clientes c ON c.id=d.cliente_id AND c.empresa_id=d.empresa_id LEFT JOIN colaboradores t ON t.id=d.tecnico_id AND t.empresa_id=d.empresa_id WHERE d.empresa_id=? ORDER BY d.criado_em DESC LIMIT 500`,[req.auth.empresaId]);res.json(rows)}catch(err){handleDbError(res,err)}});
 app.delete("/despesas/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[r]=await db.query("DELETE FROM despesas WHERE id=? AND empresa_id=?",[req.params.id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Despesa não encontrada."});res.json({message:"Despesa removida."})}catch(err){handleDbError(res,err)}});
 app.post("/servico/:id/cancelar",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[[os]]=await db.query("SELECT id,tecnico_id FROM servicos WHERE id=? AND empresa_id=?",[req.params.id,req.auth.empresaId]);if(!os)return res.status(404).json({erro:"OS não encontrada."});if(!(await tecnicoPodeAcessarOS(req,os)))return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});const[r]=await db.query("UPDATE servicos SET status='CANCELADA' WHERE id=? AND empresa_id=? AND status NOT IN ('FINALIZADA','CANCELADA')",[req.params.id,req.auth.empresaId]);if(!r.affectedRows)return res.status(409).json({erro:"OS não encontrada ou já encerrada."});await registrarStatus(req.params.id,"CANCELADA");res.json({id:Number(req.params.id),status:"CANCELADA"})}catch(err){handleDbError(res,err,"Não foi possível cancelar a OS.")}});
 

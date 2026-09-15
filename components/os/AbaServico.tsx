@@ -3,7 +3,7 @@ import React from "react";
 import { Image, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 
 import { GradientFill } from "@/components/GradientFill";
-import { GRADIENTS, styles } from "./styles";
+import { COLORS, GRADIENTS, styles } from "./styles";
 
 type Props = {
   fotos: string[];
@@ -16,6 +16,7 @@ type Props = {
   assinaturaBase64: string | null;
   onAbrirAssinatura: () => void;
   carregando: boolean;
+  mensagemEnvio?: string | null;
   podeFinalizar: boolean;
   onFinalizar: () => void;
 };
@@ -25,7 +26,7 @@ export function AbaServico({
   relatorio, onMudarRelatorio,
   nomeClienteFinal, onMudarNomeClienteFinal,
   assinaturaBase64, onAbrirAssinatura,
-  carregando, podeFinalizar, onFinalizar,
+  carregando, mensagemEnvio, podeFinalizar, onFinalizar,
 }: Props) {
   return (
     <>
@@ -61,9 +62,13 @@ export function AbaServico({
         value={relatorio}
         onChangeText={onMudarRelatorio}
       />
+
+      <Text style={{ fontSize: 12.5, color: COLORS.muted, fontWeight: "700", marginTop: 14, marginBottom: -6 }}>
+        NOME DE QUEM VAI ASSINAR O SERVIÇO
+      </Text>
       <TextInput
         style={styles.input}
-        placeholder="Nome Completo"
+        placeholder="Nome completo de quem está recebendo/assinando"
         value={nomeClienteFinal}
         onChangeText={onMudarNomeClienteFinal}
       />
@@ -85,6 +90,11 @@ export function AbaServico({
         <Feather name="send" size={17} color="#fff" />
         <Text style={styles.btnText}>{carregando ? "ENVIANDO..." : "FINALIZAR E ENVIAR"}</Text>
       </TouchableOpacity>
+      {!!mensagemEnvio && carregando && (
+        <Text style={{ marginTop: 10, textAlign: "center", color: COLORS.warning, fontSize: 12.5, fontWeight: "700" }}>
+          {mensagemEnvio}
+        </Text>
+      )}
     </>
   );
 }

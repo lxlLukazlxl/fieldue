@@ -20,6 +20,7 @@ const MAPPING = {
   'chevron.right': 'chevron-right',
   'chart.bar.fill': 'bar-chart',
   'shippingbox.fill': 'inventory-2',
+  'doc.text.fill': 'receipt-long',
 } as IconMapping;
 
 /**

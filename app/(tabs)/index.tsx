@@ -7,12 +7,10 @@ import { Cliente, Gestor, Tecnico } from "@/lib/osTypes";
 
 import { useAuthContext } from "@/hooks/useAuth";
 import { useCadastros } from "@/hooks/useCadastros";
-import { useDespesasOS } from "@/hooks/useDespesasOS";
 import { useLocationTracking } from "@/hooks/useLocationTracking";
 import { useMinhasOS } from "@/hooks/useMinhasOS";
 import { useOrdemServico } from "@/hooks/useOrdemServico";
 
-import { AbaDespesas } from "@/components/os/AbaDespesas";
 import { AbaServico } from "@/components/os/AbaServico";
 import { AssinaturaModal } from "@/components/os/AssinaturaModal";
 import { NovaOSCard } from "@/components/os/NovaOSCard";
@@ -46,7 +44,6 @@ export default function HomeScreen() {
   const cadastros = useCadastros();
   const { minhasOS, carregandoMinhasOS, buscarMinhasOS } = useMinhasOS(tecnicoSel?.id);
   const osAtual = useOrdemServico();
-  const despesasOS = useDespesasOS();
   const { online, pendentes, sincronizando, sincronizarAgora } = useSincronizacaoOffline();
 
   useLocationTracking(tecnicoSel?.id, osAtual.osId, osAtual.statusOS);
@@ -67,19 +64,11 @@ export default function HomeScreen() {
   }
 
   function handleRetomarOS(os: any) {
-    const id = osAtual.abrirOS(os);
-    despesasOS.buscarDespesas(id);
+    osAtual.abrirOS(os);
   }
 
   function handleCriarOS() {
-    osAtual.criarOS({ tecnicoSel, clienteSel, gestorSel }, () => {
-      despesasOS.resetDespesas();
-    });
-  }
-
-  function handleMudarAba(aba: "servico" | "despesas") {
-    osAtual.setAbaOS(aba);
-    if (aba === "despesas" && osAtual.osId) despesasOS.buscarDespesas(osAtual.osId);
+    osAtual.criarOS({ tecnicoSel, clienteSel, gestorSel });
   }
 
   function handleFinalizar() {
@@ -88,7 +77,6 @@ export default function HomeScreen() {
         setClienteSel(null);
         setGestorSel(null);
       }
-      despesasOS.resetDespesas();
       if (tecnicoSel) buscarMinhasOS(tecnicoSel.id);
     });
   }
@@ -144,6 +132,7 @@ export default function HomeScreen() {
           onAbrirCliente={() => setModalCliente(true)}
           onAbrirGestor={() => setModalGestor(true)}
           criandoOS={osAtual.criandoOS}
+          mensagemEnvio={osAtual.mensagemEnvio}
           onCriarOS={handleCriarOS}
           minhasOS={minhasOS}
           carregandoMinhasOS={carregandoMinhasOS}
@@ -159,46 +148,23 @@ export default function HomeScreen() {
             onMudarStatus={osAtual.mudarStatus}
             onIniciarAlmoco={osAtual.iniciarAlmoco}
             onFinalizarAlmoco={osAtual.finalizarAlmoco}
-            abaOS={osAtual.abaOS}
-            onMudarAba={handleMudarAba}
           />
 
-          {osAtual.abaOS === "servico" && (
-            <AbaServico
-              fotos={osAtual.fotos}
-              onSelecionarFotos={osAtual.selecionarFotos}
-              onRemoverFoto={osAtual.removerFoto}
-              relatorio={osAtual.relatorio}
-              onMudarRelatorio={osAtual.setRelatorio}
-              nomeClienteFinal={osAtual.nomeClienteFinal}
-              onMudarNomeClienteFinal={osAtual.setNomeClienteFinal}
-              assinaturaBase64={osAtual.assinaturaBase64}
-              onAbrirAssinatura={() => setModalAssinatura(true)}
-              carregando={osAtual.carregando}
-              podeFinalizar={osAtual.statusOS === "EM_ATENDIMENTO"}
-              onFinalizar={handleFinalizar}
-            />
-          )}
-
-          {osAtual.abaOS === "despesas" && (
-            <AbaDespesas
-              tipoDespesa={despesasOS.tipoDespesa}
-              onMudarTipo={despesasOS.setTipoDespesa}
-              valorDespesa={despesasOS.valorDespesa}
-              onMudarValor={despesasOS.setValorDespesa}
-              descricaoDespesa={despesasOS.descricaoDespesa}
-              onMudarDescricao={despesasOS.setDescricaoDespesa}
-              numeroNota={despesasOS.numeroNota}
-              onMudarNumeroNota={despesasOS.setNumeroNota}
-              fotoRecibo={despesasOS.fotoRecibo}
-              onSelecionarFotoRecibo={despesasOS.selecionarFotoRecibo}
-              cobrarDoCliente={despesasOS.cobrarDoCliente}
-              onAlternarCobrarDoCliente={() => despesasOS.setCobrarDoCliente((v) => !v)}
-              enviandoDespesa={despesasOS.enviandoDespesa}
-              onLancarDespesa={() => despesasOS.lancarDespesa(osAtual.osId, tecnicoSel?.id)}
-              despesas={despesasOS.despesas}
-            />
-          )}
+          <AbaServico
+            fotos={osAtual.fotos}
+            onSelecionarFotos={osAtual.selecionarFotos}
+            onRemoverFoto={osAtual.removerFoto}
+            relatorio={osAtual.relatorio}
+            onMudarRelatorio={osAtual.setRelatorio}
+            nomeClienteFinal={osAtual.nomeClienteFinal}
+            onMudarNomeClienteFinal={osAtual.setNomeClienteFinal}
+            assinaturaBase64={osAtual.assinaturaBase64}
+            onAbrirAssinatura={() => setModalAssinatura(true)}
+            carregando={osAtual.carregando}
+            mensagemEnvio={osAtual.mensagemEnvio}
+            podeFinalizar={osAtual.statusOS === "EM_ATENDIMENTO"}
+            onFinalizar={handleFinalizar}
+          />
 
           <TouchableOpacity
             onPress={() => osAtual.setEtapa(1)}
