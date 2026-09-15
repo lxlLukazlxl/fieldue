@@ -7,6 +7,7 @@ import {
   limparAuthSalvo,
   login as loginApi,
 } from "@/lib/auth";
+import { registrarPushToken } from "@/lib/pushNotifications";
 
 type AuthContextValue = {
   auth: AuthData | null;
@@ -32,6 +33,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const usuarioAtual = await buscarUsuarioAtual(salvo.token);
         if (usuarioAtual) {
           setAuth({ token: salvo.token, usuario: usuarioAtual });
+          registrarPushToken();
         } else {
           await limparAuthSalvo();
         }
@@ -45,6 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const dados = await loginApi(email, senha);
       setAuth(dados);
+      registrarPushToken();
     } finally {
       setEntrando(false);
     }

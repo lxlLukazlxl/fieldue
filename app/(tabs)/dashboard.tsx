@@ -10,7 +10,7 @@ export default function DashboardTecnico(){
  const carregar=useCallback(async()=>{try{const r=await fetch(`${API_URL}/tecnico/dashboard`,{headers:apiHeaders()});if(r.ok)setD(await r.json());}catch(e){console.warn(e)}finally{setLoading(false);setRefreshing(false)}},[]);
  useEffect(()=>{carregar()},[carregar]);
  const t=d?.totais||{};
- const cards=[['briefcase','OS pendentes',t.pendentes||0,C.navy],['truck','Em deslocamento',t.deslocamento||0,C.accent],['tool','Em atendimento',t.atendimento||0,C.green],['coffee','Almoço',t.almoco||0,C.orange],['check-circle','Finalizadas hoje',t.finalizadas_hoje||0,C.green],['file-text','Despesas hoje',`R$ ${Number(d?.despesas_hoje||0).toFixed(2).replace('.',',')}`,C.navy]] as const;
+ const cards=[['briefcase','OS pendentes',t.pendentes||0,C.navy],['truck','Em deslocamento',t.deslocamento||0,C.accent],['tool','Em atendimento',t.atendimento||0,C.green],['coffee','Almoço',t.almoco||0,C.orange],['check-circle','Finalizadas hoje',t.finalizadas_hoje||0,C.green]] as const;
  return <ScrollView style={{backgroundColor:C.bg}} contentContainerStyle={st.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={()=>{setRefreshing(true);carregar()}}/>}>
    <View style={st.header}><View><Text style={st.kicker}>PAINEL DO TÉCNICO</Text><Text style={st.title}>Olá, {auth?.usuario?.nome?.split(' ')[0]||'Técnico'} 👋</Text><Text style={st.sub}>Acompanhe sua rotina de campo.</Text></View><View style={st.avatar}><Feather name="user" size={22} color="#fff"/></View></View>
    {loading?<View style={st.loading}><ActivityIndicator size="large"/><Text style={st.sub}>Carregando seu painel...</Text></View>:<>

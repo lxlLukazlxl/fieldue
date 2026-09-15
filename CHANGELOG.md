@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.3.1
+- **Correção crítica**: finalizar uma OS com fotos estava dando timeout
+  sempre (Wi-Fi ou dados), mesmo com o servidor no ar. Causa: as fotos
+  eram salvas de forma síncrona e sequencial *dentro* de uma transação de
+  banco, travando o event loop e o lock da OS por tempo demais no plano
+  free do Render (0.1 CPU). Agora as fotos são salvas em paralelo e fora
+  da transação — só o UPDATE final fica no "lock".
+- App: tentativa automática de reenvio ao criar/finalizar uma OS, com
+  esperas crescentes (5s/10s/20s), pra aguentar o servidor "acordando"
+  no plano free do Render sem perder o que foi preenchido.
+- Campo de assinatura no app agora deixa claro que é o nome de quem vai
+  assinar o serviço.
+- Despesa deixou de ser uma aba dentro da OS — agora é uma aba própria
+  no menu principal, exigindo escolher o cliente relacionado. Painel web
+  ganhou uma aba "Despesas" pra ver tudo isso.
+- Painel web: botão de exportar o relatório de uma OS em **PDF**
+  (relatório, materiais, despesas, fotos e assinatura).
+- Painel web: botão "Histórico" na lista de clientes, que filtra a aba de
+  Ordens de Serviço só pelas OS daquele cliente.
+- App e servidor: notificação push pro técnico quando uma OS nova é
+  atribuída a ele (`expo-notifications` + Expo Push Service).
+
 ## 2.2.0
 - Despesas do técnico com categorias de pedágio, hospedagem, almoço/alimentação, combustível, estacionamento, material e outros.
 - Campo opcional para número da nota fiscal/recibo.

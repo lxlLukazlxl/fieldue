@@ -1,6 +1,7 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as Notifications from 'expo-notifications';
 import React from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import 'react-native-reanimated';
@@ -9,6 +10,18 @@ import "@/lib/locationTask";
 import { LoginScreen } from '@/components/auth/LoginScreen';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuthContext } from '@/hooks/useAuth';
+
+// Sem isso, uma notificação que chega enquanto o app está aberto não
+// aparece na tela (fica só no histórico do sistema).
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 export const unstable_settings = {
   anchor: '(tabs)',

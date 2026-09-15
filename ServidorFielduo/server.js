@@ -7,9 +7,10 @@ const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const PDFDocument = require("pdfkit");
 
 const app = express();
-const VERSAO = "2.3.0";
+const VERSAO = "2.3.1";
 const PORT = Number(process.env.PORT || 3000);
 const UPLOAD_DIR = path.join(__dirname, "uploads");
 const JWT_SECRET = String(process.env.JWT_SECRET || "").trim();
@@ -209,6 +210,18 @@ async function tecnicoPodeAcessarOS(req, os) {
 const TABELAS_PERMITIDAS = ["colaboradores", "clientes", "gestores"];
 function tipoValido(tipo) { return TABELAS_PERMITIDAS.includes(tipo); }
 
+async function salvarFotoBase64Async(base64, indice) {
+  if (typeof base64 !== "string" || !base64.trim()) return null;
+  const match = base64.match(/^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/i);
+  const dados = match ? match[2] : base64;
+  const extensao = match ? (match[1].toLowerCase() === "jpg" ? "jpg" : match[1].toLowerCase()) : "jpg";
+  if (!/^[A-Za-z0-9+/=\r\n]+$/.test(dados)) return null;
+  const buffer = Buffer.from(dados, "base64");
+  if (!buffer.length || buffer.length > 5 * 1024 * 1024) return null;
+  const nome = `${Date.now()}-${crypto.randomBytes(5).toString("hex")}-${indice}.${extensao}`;
+  await fs.promises.writeFile(path.join(UPLOAD_DIR, nome), buffer);
+  return `/uploads/${nome}`;
+}
 function salvarFotoBase64(base64, indice) {
   if (typeof base64 !== "string" || !base64.trim()) return null;
   const match = base64.match(/^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/i);
@@ -220,6 +233,25 @@ function salvarFotoBase64(base64, indice) {
   const nome = `${Date.now()}-${crypto.randomBytes(5).toString("hex")}-${indice}.${extensao}`;
   fs.writeFileSync(path.join(UPLOAD_DIR, nome), buffer);
   return `/uploads/${nome}`;
+}
+// Lê uma foto/assinatura como Buffer, seja ela um caminho salvo em disco
+// (/uploads/...) ou uma string base64/data-url — usado na geração do PDF.
+function labelsStatusOSPdf(status) {
+  const mapa = { ATRIBUIDA: "Atribuída", ACEITA: "Aceita", EM_DESLOCAMENTO: "Em deslocamento", NO_LOCAL: "No local", EM_ATENDIMENTO: "Em atendimento", EM_ALMOCO: "Em horário de almoço", FINALIZADA: "Finalizada", CANCELADA: "Cancelada" };
+  return mapa[status] || status || "—";
+}
+function bufferDaImagem(valor) {
+  if (typeof valor !== "string" || !valor.trim()) return null;
+  try {
+    if (valor.startsWith("/uploads/")) {
+      const arquivo = path.join(UPLOAD_DIR, path.basename(valor));
+      if (!arquivo.startsWith(UPLOAD_DIR) || !fs.existsSync(arquivo)) return null;
+      return fs.readFileSync(arquivo);
+    }
+    const match = valor.match(/^data:image\/(?:jpeg|jpg|png|webp);base64,(.+)$/i);
+    const dados = match ? match[1] : valor;
+    return Buffer.from(dados, "base64");
+  } catch (_) { return null; }
 }
 function normalizarFotos(valor) {
   if (!valor) return [];
@@ -305,6 +337,7 @@ async function inicializarBanco() {
   }
   if (!(await colunaExiste("servico_status_historico","empresa_id"))) await db.query("ALTER TABLE servico_status_historico ADD COLUMN empresa_id INT NULL");
   if (!(await colunaExiste("usuarios","colaborador_id"))) await db.query("ALTER TABLE usuarios ADD COLUMN colaborador_id INT NULL");
+  if (!(await colunaExiste("usuarios","push_token"))) await db.query("ALTER TABLE usuarios ADD COLUMN push_token VARCHAR(255) NULL");
   const [[histNull]] = await db.query("SELECT COUNT(*) total FROM servico_status_historico WHERE empresa_id IS NULL");
   if (Number(histNull.total) > 0) { const empresa = await buscarEmpresaPadrao(); await db.query("UPDATE servico_status_historico h JOIN servicos s ON s.id=h.servico_id SET h.empresa_id=s.empresa_id WHERE h.empresa_id IS NULL"); }
   try { await db.query("ALTER TABLE servico_status_historico MODIFY empresa_id INT NOT NULL"); } catch (_) {}
@@ -371,6 +404,40 @@ setInterval(() => {
   for (const [chave, r] of tentativasLoginPorIp) if (agora - r.desde > JANELA_LOGIN_MS) tentativasLoginPorIp.delete(chave);
   for (const [chave, r] of tentativasLoginPorEmail) if (agora - r.desde > JANELA_LOGIN_MS) tentativasLoginPorEmail.delete(chave);
 }, 5 * 60 * 1000).unref?.();
+
+// Notificações push (Expo Push Service) --------------------------------
+// Fire-and-forget: se falhar, só loga — nunca deve derrubar a
+// requisição principal (criar/atualizar uma OS não pode depender disso).
+async function enviarPush(tokens, titulo, corpo, dados) {
+  const validos = (Array.isArray(tokens) ? tokens : [tokens]).filter(t => typeof t === "string" && t.startsWith("ExponentPushToken"));
+  if (!validos.length) return;
+  try {
+    await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(validos.map(to => ({ to, title: titulo, body: corpo, data: dados || {}, sound: "default" }))),
+    });
+  } catch (err) {
+    console.error("Erro ao enviar push notification:", err.message);
+  }
+}
+async function enviarPushParaTecnico(empresaId, tecnicoId, titulo, corpo, dados) {
+  try {
+    const [usuarios] = await db.query("SELECT push_token FROM usuarios WHERE empresa_id=? AND colaborador_id=? AND ativo=1 AND push_token IS NOT NULL", [empresaId, tecnicoId]);
+    if (usuarios.length) await enviarPush(usuarios.map(u => u.push_token), titulo, corpo, dados);
+  } catch (err) {
+    console.error("Erro ao buscar token de push do técnico:", err.message);
+  }
+}
+
+app.post("/auth/push-token", autenticar, async (req, res) => {
+  const token = String(req.body.token || "").trim();
+  if (!token) return res.status(400).json({ erro: "Token é obrigatório." });
+  try {
+    await db.query("UPDATE usuarios SET push_token=? WHERE id=?", [token, req.auth.usuarioId]);
+    res.json({ message: "Token registrado." });
+  } catch (err) { handleDbError(res, err); }
+});
 
 app.post("/auth/login", async (req,res) => {
   const email = normalizarEmail(req.body.email);
@@ -469,6 +536,109 @@ app.delete("/gestao/:tipo/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(r
 app.get("/gestao/resumo",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{try{const e=req.auth.empresaId;const[[totalOS]] = await db.query("SELECT COUNT(*) total FROM servicos WHERE empresa_id=?",[e]);const[[hoje]]=await db.query("SELECT COUNT(*) total FROM servicos WHERE empresa_id=? AND DATE(fim_data)=CURDATE()",[e]);const[[tecnicos]]=await db.query("SELECT COUNT(*) total FROM colaboradores WHERE empresa_id=?",[e]);const[[clientes]]=await db.query("SELECT COUNT(*) total FROM clientes WHERE empresa_id=?",[e]);const[[gestores]]=await db.query("SELECT COUNT(*) total FROM gestores WHERE empresa_id=?",[e]);res.json({ordens:Number(totalOS.total),ordensHoje:Number(hoje.total),tecnicos:Number(tecnicos.total),clientes:Number(clientes.total),gestores:Number(gestores.total)})}catch(err){handleDbError(res,err)}});
 app.get("/gestao/relatorios",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{const limite=Math.min(Math.max(Number(req.query.limite)||100,1),500);try{const[rows]=await db.query(`SELECT s.*,t.nome tecnico_nome,c.nome cliente_nome,g.nome gestor_nome FROM servicos s LEFT JOIN colaboradores t ON s.tecnico_id=t.id AND t.empresa_id=s.empresa_id LEFT JOIN clientes c ON s.cliente_id=c.id AND c.empresa_id=s.empresa_id LEFT JOIN gestores g ON s.gestor_id=g.id AND g.empresa_id=s.empresa_id WHERE s.empresa_id=? ORDER BY s.id DESC LIMIT ?`,[req.auth.empresaId,limite]);res.json(rows)}catch(err){handleDbError(res,err)}});
 
+app.get("/gestao/relatorios/:id/pdf",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{
+  const id = req.params.id;
+  if (!validarId(id)) return res.status(400).json({erro:"ID inválido."});
+  try {
+    const [[os]] = await db.query(
+      `SELECT s.*, t.nome tecnico_nome, c.nome cliente_nome, c.rua, c.bairro, c.cidade, g.nome gestor_nome
+       FROM servicos s
+       LEFT JOIN colaboradores t ON s.tecnico_id=t.id AND t.empresa_id=s.empresa_id
+       LEFT JOIN clientes c ON s.cliente_id=c.id AND c.empresa_id=s.empresa_id
+       LEFT JOIN gestores g ON s.gestor_id=g.id AND g.empresa_id=s.empresa_id
+       WHERE s.id=? AND s.empresa_id=?`, [id, req.auth.empresaId]);
+    if (!os) return res.status(404).json({ erro: "OS não encontrada." });
+
+    const [materiais] = await db.query(
+      "SELECT sm.quantidade, m.nome material_nome, m.unidade FROM servico_materiais sm JOIN materiais m ON m.id=sm.material_id WHERE sm.servico_id=? AND sm.status<>'CANCELADO'", [id]);
+    const [despesas] = await db.query(
+      "SELECT tipo, valor, descricao, cobrar_do_cliente FROM despesas WHERE servico_id=?", [id]);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="OS-${os.id}.pdf"`);
+
+    const doc = new PDFDocument({ margin: 42, size: "A4" });
+    doc.on("error", (e) => console.error("Erro ao gerar PDF:", e));
+    doc.pipe(res);
+
+    const fmtData = (d) => (d ? new Date(d).toLocaleString("pt-BR") : "—");
+
+    doc.fontSize(19).fillColor("#152238").text(`Ordem de Serviço #${os.id}`);
+    doc.fontSize(10).fillColor("#687386").text(`Status: ${labelsStatusOSPdf(os.status)}`);
+    doc.moveDown(0.8);
+
+    doc.fontSize(11).fillColor("#152238").text(`Cliente: ${os.cliente_nome || "—"}`);
+    if (os.rua || os.bairro || os.cidade) {
+      doc.fontSize(9).fillColor("#687386").text([os.rua, os.bairro, os.cidade].filter(Boolean).join(", "));
+    }
+    doc.fontSize(11).fillColor("#152238").text(`Técnico: ${os.tecnico_nome || "—"}`);
+    doc.text(`Gestor: ${os.gestor_nome || "—"}`);
+    doc.moveDown(0.4);
+
+    doc.fontSize(9).fillColor("#687386").text(
+      `Criada: ${fmtData(os.criada_data)}  •  Início: ${fmtData(os.inicio_data)}  •  Finalizada: ${fmtData(os.fim_data)}`
+    );
+    doc.moveDown(0.9);
+
+    doc.fontSize(13).fillColor("#152238").text("Relatório do serviço");
+    doc.moveTo(doc.x, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor("#E5E9F0").stroke();
+    doc.moveDown(0.3);
+    doc.fontSize(10).fillColor("#16233B").text(os.relatorio || "—", { align: "justify" });
+    doc.moveDown(0.8);
+
+    if (materiais.length) {
+      doc.fontSize(13).fillColor("#152238").text("Materiais utilizados");
+      doc.moveTo(doc.x, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor("#E5E9F0").stroke();
+      doc.moveDown(0.3);
+      materiais.forEach((m) => doc.fontSize(10).fillColor("#16233B").text(`•  ${m.quantidade} ${m.unidade} — ${m.material_nome}`));
+      doc.moveDown(0.7);
+    }
+
+    if (despesas.length) {
+      doc.fontSize(13).fillColor("#152238").text("Despesas");
+      doc.moveTo(doc.x, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor("#E5E9F0").stroke();
+      doc.moveDown(0.3);
+      despesas.forEach((d) => doc.fontSize(10).fillColor("#16233B").text(
+        `•  ${d.tipo} — R$ ${Number(d.valor).toFixed(2)}${d.descricao ? ` (${d.descricao})` : ""} ${d.cobrar_do_cliente ? "" : "[custo interno]"}`
+      ));
+      doc.moveDown(0.7);
+    }
+
+    const fotos = normalizarFotos(os.foto_conclusao);
+    if (fotos.length) {
+      doc.addPage();
+      doc.fontSize(13).fillColor("#152238").text("Fotos do serviço");
+      doc.moveDown(0.4);
+      const larguraImg = 160, alturaImg = 120, gap = 14;
+      let x = doc.page.margins.left, y = doc.y;
+      for (const caminho of fotos) {
+        const buffer = bufferDaImagem(caminho);
+        if (!buffer) continue;
+        if (x + larguraImg > doc.page.width - doc.page.margins.right) { x = doc.page.margins.left; y += alturaImg + gap; }
+        if (y + alturaImg > doc.page.height - doc.page.margins.bottom) { doc.addPage(); x = doc.page.margins.left; y = doc.page.margins.top; }
+        try { doc.image(buffer, x, y, { fit: [larguraImg, alturaImg] }); } catch (_) {}
+        x += larguraImg + gap;
+      }
+    }
+
+    doc.addPage();
+    doc.fontSize(13).fillColor("#152238").text("Assinatura de quem recebeu o serviço");
+    doc.moveDown(0.5);
+    const bufferAssinatura = bufferDaImagem(os.cliente_assinatura);
+    if (bufferAssinatura) {
+      try { doc.image(bufferAssinatura, { fit: [260, 140] }); } catch (_) {}
+    }
+    doc.moveDown(0.5);
+    doc.fontSize(10).fillColor("#687386").text(`Assinado por: ${os.cliente_nome_completo || "—"}`);
+
+    doc.end();
+  } catch (err) {
+    console.error("Erro ao gerar PDF da OS:", err);
+    if (!res.headersSent) res.status(500).json({ erro: "Não foi possível gerar o PDF." });
+    else res.end();
+  }
+});
+
 // Pontos/GPS -----------------------------------------------------------------
 app.post("/pontos",autenticar,async(req,res)=>{
   let {tecnico_id,os_id,latitude,longitude}=req.body;
@@ -520,10 +690,64 @@ app.get("/tecnico/dashboard",autenticar,exigirPerfil("TECNICO"),async(req,res)=>
 });
 
 app.get("/servico",authOpcional,async(req,res)=>{const{tecnico_id,status}=req.query;const c=["s.empresa_id=?"],v=[req.auth.empresaId];if(req.auth.perfil==="TECNICO"){const cid=await colaboradorDoUsuario(req);if(!cid)return res.status(403).json({erro:"Usuário técnico não está vinculado a um colaborador."});c.push("s.tecnico_id=?");v.push(cid)}else if(tecnico_id){c.push("s.tecnico_id=?");v.push(tecnico_id)}if(status){c.push("s.status=?");v.push(String(status).toUpperCase())}try{const[rows]=await db.query(`SELECT s.*,c.nome cliente_nome,g.nome gestor_nome FROM servicos s LEFT JOIN clientes c ON s.cliente_id=c.id AND c.empresa_id=s.empresa_id LEFT JOIN gestores g ON s.gestor_id=g.id AND g.empresa_id=s.empresa_id WHERE ${c.join(" AND ")} ORDER BY s.criada_data DESC LIMIT 100`,v);res.json(rows)}catch(err){handleDbError(res,err)}});
-app.post("/servico/criar",autenticar,async(req,res)=>{let{tecnico_id,cliente_id,gestor_id}=req.body;if(req.auth.perfil==="TECNICO"){const proprioTecnico=await colaboradorDoUsuario(req);if(!proprioTecnico)return res.status(403).json({erro:"Usuário técnico não está vinculado a um colaborador."});tecnico_id=proprioTecnico;}if(!validarId(tecnico_id)||!validarId(cliente_id)||!validarId(gestor_id))return res.status(400).json({erro:"Técnico, cliente e gestor válidos são obrigatórios."});const conn=await db.getConnection();try{await conn.beginTransaction();const[[ok]]=await conn.query("SELECT 1 FROM colaboradores t JOIN clientes c ON c.empresa_id=t.empresa_id JOIN gestores g ON g.empresa_id=t.empresa_id WHERE t.id=? AND c.id=? AND g.id=? AND t.empresa_id=? LIMIT 1",[tecnico_id,cliente_id,gestor_id,req.auth.empresaId]);if(!ok){await conn.rollback();return res.status(400).json({erro:"Técnico, cliente e gestor devem pertencer à mesma empresa."})}const[r]=await conn.query("INSERT INTO servicos (empresa_id,tecnico_id,cliente_id,gestor_id,status,criada_data) VALUES (?,?,?,?, 'ATRIBUIDA',NOW())",[req.auth.empresaId,tecnico_id,cliente_id,gestor_id]);await registrarStatus(r.insertId,"ATRIBUIDA",conn);await conn.commit();res.status(201).json({id:r.insertId,status:"ATRIBUIDA",message:"Ordem de serviço criada."})}catch(err){await conn.rollback();handleDbError(res,err,"Não foi possível criar a ordem de serviço.")}finally{conn.release()}});
+app.post("/servico/criar",autenticar,async(req,res)=>{let{tecnico_id,cliente_id,gestor_id}=req.body;if(req.auth.perfil==="TECNICO"){const proprioTecnico=await colaboradorDoUsuario(req);if(!proprioTecnico)return res.status(403).json({erro:"Usuário técnico não está vinculado a um colaborador."});tecnico_id=proprioTecnico;}if(!validarId(tecnico_id)||!validarId(cliente_id)||!validarId(gestor_id))return res.status(400).json({erro:"Técnico, cliente e gestor válidos são obrigatórios."});const conn=await db.getConnection();try{await conn.beginTransaction();const[[ok]]=await conn.query("SELECT 1 FROM colaboradores t JOIN clientes c ON c.empresa_id=t.empresa_id JOIN gestores g ON g.empresa_id=t.empresa_id WHERE t.id=? AND c.id=? AND g.id=? AND t.empresa_id=? LIMIT 1",[tecnico_id,cliente_id,gestor_id,req.auth.empresaId]);if(!ok){await conn.rollback();return res.status(400).json({erro:"Técnico, cliente e gestor devem pertencer à mesma empresa."})}const[r]=await conn.query("INSERT INTO servicos (empresa_id,tecnico_id,cliente_id,gestor_id,status,criada_data) VALUES (?,?,?,?, 'ATRIBUIDA',NOW())",[req.auth.empresaId,tecnico_id,cliente_id,gestor_id]);await registrarStatus(r.insertId,"ATRIBUIDA",conn);await conn.commit();res.status(201).json({id:r.insertId,status:"ATRIBUIDA",message:"Ordem de serviço criada."});const[[cli]]=await db.query("SELECT nome FROM clientes WHERE id=? AND empresa_id=?",[cliente_id,req.auth.empresaId]).catch(()=>[[null]]);enviarPushParaTecnico(req.auth.empresaId,tecnico_id,"Nova OS atribuída",`Você recebeu uma nova ordem de serviço${cli?.nome?` para ${cli.nome}`:""}.`,{tipo:"nova_os",os_id:r.insertId});}catch(err){await conn.rollback();handleDbError(res,err,"Não foi possível criar a ordem de serviço.")}finally{conn.release()}});
 app.get("/servico/:id",autenticar,async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[[os]]=await db.query(`SELECT s.*,t.nome tecnico_nome,c.nome cliente_nome,g.nome gestor_nome FROM servicos s LEFT JOIN colaboradores t ON s.tecnico_id=t.id AND t.empresa_id=s.empresa_id LEFT JOIN clientes c ON s.cliente_id=c.id AND c.empresa_id=s.empresa_id LEFT JOIN gestores g ON s.gestor_id=g.id AND g.empresa_id=s.empresa_id WHERE s.id=? AND s.empresa_id=?`,[req.params.id,req.auth.empresaId]);if(!os)return res.status(404).json({erro:"OS não encontrada."});if(!(await tecnicoPodeAcessarOS(req,os)))return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});const[historico]=await db.query("SELECT status,dataHora FROM servico_status_historico WHERE servico_id=? AND empresa_id=? ORDER BY id",[req.params.id,req.auth.empresaId]);res.json({...os,historico})}catch(err){handleDbError(res,err)}});
 app.post("/servico/:id/status",autenticar,async(req,res)=>{const id=req.params.id,proximo=String(req.body.status||"").trim().toUpperCase();if(!validarId(id)||!STATUS_VALIDOS.includes(proximo)||["FINALIZADA","CANCELADA"].includes(proximo))return res.status(400).json({erro:"OS ou status inválido. Use finalização/cancelamento para encerrar."});const conn=await db.getConnection();try{await conn.beginTransaction();const[[os]]=await conn.query("SELECT id,status,tecnico_id FROM servicos WHERE id=? AND empresa_id=? FOR UPDATE",[id,req.auth.empresaId]);if(!os){await conn.rollback();return res.status(404).json({erro:"OS não encontrada."});}if(!(await tecnicoPodeAcessarOS(req,os))){await conn.rollback();return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});} if(TRANSICOES[os.status]!==proximo){await conn.rollback();return res.status(409).json({erro:`Transição inválida: ${os.status} → ${proximo}.`});}const coluna={ACEITA:"aceita_data",EM_DESLOCAMENTO:"deslocamento_data",NO_LOCAL:"chegada_data",EM_ATENDIMENTO:"inicio_data"}[proximo];await conn.query(`UPDATE servicos SET status=?,${coluna}=NOW() WHERE id=? AND empresa_id=?`,[proximo,id,req.auth.empresaId]);await registrarStatus(id,proximo,conn);await conn.commit();res.json({id:Number(id),status:proximo,message:"Status atualizado com sucesso."})}catch(err){await conn.rollback();handleDbError(res,err,"Não foi possível atualizar o status da OS.")}finally{conn.release()}});
-app.post("/servico/finalizar",autenticar,async(req,res)=>{let{os_id,tecnico_id,cliente_id,gestor_id,relatorio,fotos,cliente_nome_completo,cliente_assinatura}=req.body;if(req.auth.perfil==="TECNICO"){tecnico_id=await colaboradorDoUsuario(req);} if(!validarId(os_id)||!validarId(tecnico_id)||!validarId(cliente_id)||!validarId(gestor_id))return res.status(400).json({erro:"OS, técnico, cliente e gestor válidos são obrigatórios."});if(!String(relatorio||"").trim())return res.status(400).json({erro:"O relatório do serviço é obrigatório."});if(!String(cliente_nome_completo||"").trim()||!cliente_assinatura)return res.status(400).json({erro:"Nome e assinatura do responsável são obrigatórios."});const fotosRecebidas=normalizarFotos(fotos);if(fotosRecebidas.length<3)return res.status(400).json({erro:"São necessárias pelo menos 3 fotos."});const conn=await db.getConnection(),fotosSalvas=[];try{await conn.beginTransaction();const[[os]]=await conn.query("SELECT * FROM servicos WHERE id=? AND empresa_id=? FOR UPDATE",[os_id,req.auth.empresaId]);if(!os){await conn.rollback();return res.status(404).json({erro:"OS não encontrada."})}if(!(await tecnicoPodeAcessarOS(req,os))){await conn.rollback();return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});}if(Number(os.tecnico_id)!==Number(tecnico_id)||Number(os.cliente_id)!==Number(cliente_id)||Number(os.gestor_id)!==Number(gestor_id)) {await conn.rollback();return res.status(409).json({erro:"Os dados não correspondem à OS selecionada."});}if(os.status!=="EM_ATENDIMENTO"){await conn.rollback();return res.status(409).json({erro:`A OS precisa estar em EM_ATENDIMENTO. Status atual: ${os.status}.`});}for(let i=0;i<fotosRecebidas.length;i++){const foto=fotosRecebidas[i],url=typeof foto==="string"&&foto.startsWith("/uploads/")?foto:salvarFotoBase64(foto,i+1);if(!url)throw new Error(`Foto ${i+1} inválida ou maior que 5 MB.`);fotosSalvas.push(url)}await conn.query("UPDATE servicos SET relatorio=?,foto_conclusao=?,cliente_nome_completo=?,cliente_assinatura=?,status='FINALIZADA',fim_data=NOW() WHERE id=? AND empresa_id=?",[String(relatorio).trim(),JSON.stringify(fotosSalvas),String(cliente_nome_completo).trim(),cliente_assinatura,os_id,req.auth.empresaId]);await registrarStatus(os_id,"FINALIZADA",conn);await conn.commit();res.json({message:"Ordem de serviço finalizada com sucesso.",id:Number(os_id),fotos:fotosSalvas,status:"FINALIZADA"})}catch(err){try{await conn.rollback()}catch(_){}fotosSalvas.forEach(f=>excluirArquivosFotos(JSON.stringify([f])));if(err.code)return handleDbError(res,err,"Erro ao salvar a ordem de serviço.");res.status(400).json({erro:err.message||"Não foi possível processar as fotos."})}finally{conn.release()}});
+app.post("/servico/finalizar",autenticar,async(req,res)=>{
+  let{os_id,tecnico_id,cliente_id,gestor_id,relatorio,fotos,cliente_nome_completo,cliente_assinatura}=req.body;
+  if(req.auth.perfil==="TECNICO"){tecnico_id=await colaboradorDoUsuario(req);}
+  if(!validarId(os_id)||!validarId(tecnico_id)||!validarId(cliente_id)||!validarId(gestor_id))return res.status(400).json({erro:"OS, técnico, cliente e gestor válidos são obrigatórios."});
+  if(!String(relatorio||"").trim())return res.status(400).json({erro:"O relatório do serviço é obrigatório."});
+  if(!String(cliente_nome_completo||"").trim()||!cliente_assinatura)return res.status(400).json({erro:"Nome e assinatura do responsável são obrigatórios."});
+  const fotosRecebidas=normalizarFotos(fotos);
+  if(fotosRecebidas.length<3)return res.status(400).json({erro:"São necessárias pelo menos 3 fotos."});
+
+  // 1) Checagem rápida (sem travar nada) antes de gastar tempo/CPU salvando
+  // fotos — evita gravar arquivo em disco pra depois descobrir que a OS já
+  // não está mais no status certo.
+  try{
+    const[[osAtual]]=await db.query("SELECT * FROM servicos WHERE id=? AND empresa_id=?",[os_id,req.auth.empresaId]);
+    if(!osAtual)return res.status(404).json({erro:"OS não encontrada."});
+    if(!(await tecnicoPodeAcessarOS(req,osAtual)))return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});
+    if(Number(osAtual.tecnico_id)!==Number(tecnico_id)||Number(osAtual.cliente_id)!==Number(cliente_id)||Number(osAtual.gestor_id)!==Number(gestor_id))return res.status(409).json({erro:"Os dados não correspondem à OS selecionada."});
+    if(osAtual.status!=="EM_ATENDIMENTO")return res.status(409).json({erro:`A OS precisa estar em EM_ATENDIMENTO. Status atual: ${osAtual.status}.`});
+  }catch(err){return handleDbError(res,err);}
+
+  // 2) Salva as fotos em paralelo, FORA de qualquer transação — é a parte
+  // mais lenta (decodificar base64 + gravar em disco), e no plano free do
+  // Render (CPU bem limitada) fazer isso de forma síncrona e sequencial
+  // dentro de uma transação já causou timeout consistente. Assim, nenhum
+  // lock de banco fica preso enquanto isso roda.
+  let fotosSalvas;
+  try{
+    fotosSalvas = await Promise.all(fotosRecebidas.map(async(foto,i)=>{
+      if(typeof foto==="string"&&foto.startsWith("/uploads/"))return foto;
+      const url = await salvarFotoBase64Async(foto,i+1);
+      if(!url) throw new Error(`Foto ${i+1} inválida ou maior que 5 MB.`);
+      return url;
+    }));
+  }catch(err){
+    return res.status(400).json({erro:err.message||"Não foi possível processar as fotos."});
+  }
+
+  // 3) Só agora abre a transação — rápida, só o UPDATE final — e revalida o
+  // status por segurança (pode ter mudado entre o passo 1 e agora).
+  const conn=await db.getConnection();
+  try{
+    await conn.beginTransaction();
+    const[[os]]=await conn.query("SELECT * FROM servicos WHERE id=? AND empresa_id=? FOR UPDATE",[os_id,req.auth.empresaId]);
+    if(!os){await conn.rollback();fotosSalvas.forEach(f=>excluirArquivosFotos(JSON.stringify([f])));return res.status(404).json({erro:"OS não encontrada."});}
+    if(os.status!=="EM_ATENDIMENTO"){await conn.rollback();fotosSalvas.forEach(f=>excluirArquivosFotos(JSON.stringify([f])));return res.status(409).json({erro:`A OS precisa estar em EM_ATENDIMENTO. Status atual: ${os.status}.`});}
+    await conn.query("UPDATE servicos SET relatorio=?,foto_conclusao=?,cliente_nome_completo=?,cliente_assinatura=?,status='FINALIZADA',fim_data=NOW() WHERE id=? AND empresa_id=?",[String(relatorio).trim(),JSON.stringify(fotosSalvas),String(cliente_nome_completo).trim(),cliente_assinatura,os_id,req.auth.empresaId]);
+    await registrarStatus(os_id,"FINALIZADA",conn);
+    await conn.commit();
+    res.json({message:"Ordem de serviço finalizada com sucesso.",id:Number(os_id),fotos:fotosSalvas,status:"FINALIZADA"});
+  }catch(err){
+    try{await conn.rollback()}catch(_){}
+    fotosSalvas.forEach(f=>excluirArquivosFotos(JSON.stringify([f])));
+    handleDbError(res,err,"Erro ao salvar a ordem de serviço.");
+  }finally{conn.release()}
+});
 app.post("/servico/:id/almoco/iniciar",autenticar,async(req,res)=>{const id=req.params.id;if(!validarId(id))return res.status(400).json({erro:"ID inválido."});const conn=await db.getConnection();try{await conn.beginTransaction();const[[os]]=await conn.query("SELECT id,status FROM servicos WHERE id=? AND empresa_id=? FOR UPDATE",[id,req.auth.empresaId]);if(!os){await conn.rollback();return res.status(404).json({erro:"OS não encontrada."})}if(!(await tecnicoPodeAcessarOS(req,os))){await conn.rollback();return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});}if(os.status!=="EM_ATENDIMENTO"){await conn.rollback();return res.status(409).json({erro:`Só é possível iniciar o almoço com a OS em atendimento. Status atual: ${os.status}.`})}await conn.query("UPDATE servicos SET status='EM_ALMOCO',almoco_inicio_data=NOW() WHERE id=? AND empresa_id=?",[id,req.auth.empresaId]);await registrarStatus(id,"EM_ALMOCO",conn);await conn.commit();res.json({id:Number(id),status:"EM_ALMOCO",message:"Horário de almoço registrado."})}catch(err){await conn.rollback();handleDbError(res,err,"Não foi possível iniciar o almoço.")}finally{conn.release()}});
 app.post("/servico/:id/almoco/finalizar",autenticar,async(req,res)=>{const id=req.params.id;if(!validarId(id))return res.status(400).json({erro:"ID inválido."});const conn=await db.getConnection();try{await conn.beginTransaction();const[[os]]=await conn.query("SELECT id,status FROM servicos WHERE id=? AND empresa_id=? FOR UPDATE",[id,req.auth.empresaId]);if(!os){await conn.rollback();return res.status(404).json({erro:"OS não encontrada."})}if(!(await tecnicoPodeAcessarOS(req,os))){await conn.rollback();return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});}if(os.status!=="EM_ALMOCO"){await conn.rollback();return res.status(409).json({erro:`A OS não está em horário de almoço. Status atual: ${os.status}.`})}await conn.query("UPDATE servicos SET status='EM_ATENDIMENTO',almoco_fim_data=NOW() WHERE id=? AND empresa_id=?",[id,req.auth.empresaId]);await registrarStatus(id,"EM_ATENDIMENTO",conn);await conn.commit();res.json({id:Number(id),status:"EM_ATENDIMENTO",message:"Retorno do almoço registrado."})}catch(err){await conn.rollback();handleDbError(res,err,"Não foi possível finalizar o almoço.")}finally{conn.release()}});
 

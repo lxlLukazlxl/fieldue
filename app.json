@@ -40,6 +40,12 @@
     "plugins": [
       "expo-router",
       [
+        "expo-notifications",
+        {
+          "color": "#FF7A29"
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
