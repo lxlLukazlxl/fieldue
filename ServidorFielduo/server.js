@@ -10,7 +10,7 @@ const crypto = require("crypto");
 const PDFDocument = require("pdfkit");
 
 const app = express();
-const VERSAO = "2.3.1";
+const VERSAO = "2.3.2";
 const PORT = Number(process.env.PORT || 3000);
 const UPLOAD_DIR = path.join(__dirname, "uploads");
 const JWT_SECRET = String(process.env.JWT_SECRET || "").trim();
@@ -338,6 +338,7 @@ async function inicializarBanco() {
   if (!(await colunaExiste("servico_status_historico","empresa_id"))) await db.query("ALTER TABLE servico_status_historico ADD COLUMN empresa_id INT NULL");
   if (!(await colunaExiste("usuarios","colaborador_id"))) await db.query("ALTER TABLE usuarios ADD COLUMN colaborador_id INT NULL");
   if (!(await colunaExiste("usuarios","push_token"))) await db.query("ALTER TABLE usuarios ADD COLUMN push_token VARCHAR(255) NULL");
+  if (!(await colunaExiste("colaboradores","ativo"))) await db.query("ALTER TABLE colaboradores ADD COLUMN ativo TINYINT(1) NOT NULL DEFAULT 1");
   const [[histNull]] = await db.query("SELECT COUNT(*) total FROM servico_status_historico WHERE empresa_id IS NULL");
   if (Number(histNull.total) > 0) { const empresa = await buscarEmpresaPadrao(); await db.query("UPDATE servico_status_historico h JOIN servicos s ON s.id=h.servico_id SET h.empresa_id=s.empresa_id WHERE h.empresa_id IS NULL"); }
   try { await db.query("ALTER TABLE servico_status_historico MODIFY empresa_id INT NOT NULL"); } catch (_) {}
@@ -430,6 +431,32 @@ async function enviarPushParaTecnico(empresaId, tecnicoId, titulo, corpo, dados)
   }
 }
 
+async function enviarPushParaGestores(empresaId, titulo, corpo, dados) {
+  try {
+    const [usuarios] = await db.query("SELECT push_token FROM usuarios WHERE empresa_id=? AND perfil IN ('ADMIN','GESTOR') AND ativo=1 AND push_token IS NOT NULL", [empresaId]);
+    if (usuarios.length) await enviarPush(usuarios.map(u => u.push_token), titulo, corpo, dados);
+  } catch (err) {
+    console.error("Erro ao buscar tokens de push dos gestores:", err.message);
+  }
+}
+
+app.delete("/auth/usuarios/:id", autenticar, exigirPerfil("ADMIN"), async(req,res)=>{
+  const id=req.params.id;
+  if(!validarId(id)) return res.status(400).json({erro:"ID inválido."});
+  if(Number(id)===req.auth.usuarioId) return res.status(400).json({erro:"Você não pode excluir seu próprio usuário."});
+  try{
+    const[[alvo]]=await db.query("SELECT perfil FROM usuarios WHERE id=? AND empresa_id=?",[id,req.auth.empresaId]);
+    if(!alvo) return res.status(404).json({erro:"Usuário não encontrado."});
+    if(alvo.perfil==="ADMIN"){
+      const[[{total}]]=await db.query("SELECT COUNT(*) total FROM usuarios WHERE empresa_id=? AND perfil='ADMIN' AND ativo=1",[req.auth.empresaId]);
+      if(Number(total)<=1) return res.status(400).json({erro:"Não é possível excluir o último administrador da empresa."});
+    }
+    const[r]=await db.query("DELETE FROM usuarios WHERE id=? AND empresa_id=?",[id,req.auth.empresaId]);
+    if(!r.affectedRows) return res.status(404).json({erro:"Usuário não encontrado."});
+    res.json({message:"Usuário excluído com sucesso."});
+  }catch(err){handleDbError(res,err,"Não foi possível excluir o usuário.");}
+});
+
 app.post("/auth/push-token", autenticar, async (req, res) => {
   const token = String(req.body.token || "").trim();
   if (!token) return res.status(400).json({ erro: "Token é obrigatório." });
@@ -490,7 +517,7 @@ app.post("/auth/usuarios", autenticar, exigirPerfil("ADMIN"), async (req,res)=>{
 app.patch("/auth/usuarios/:id", autenticar, exigirPerfil("ADMIN"), async(req,res)=>{ const id=req.params.id; if(!validarId(id)) return res.status(400).json({erro:"ID inválido."}); const {nome,perfil,ativo,senha,colaborador_id}=req.body; try { const campos=[],vals=[]; if(nome!==undefined){campos.push("nome=?");vals.push(String(nome).trim())} if(perfil!==undefined){const p=String(perfil).toUpperCase();if(!["ADMIN","GESTOR","TECNICO"].includes(p))return res.status(400).json({erro:"Perfil inválido."});campos.push("perfil=?");vals.push(p)} if(ativo!==undefined){campos.push("ativo=?");vals.push(ativo?1:0)} if(colaborador_id!==undefined){campos.push("colaborador_id=?");vals.push(validarId(colaborador_id)?Number(colaborador_id):null)} if(senha){if(String(senha).length<8)return res.status(400).json({erro:"Senha deve ter pelo menos 8 caracteres."});campos.push("senha_hash=?");vals.push(await hashSenha(senha))} if(!campos.length)return res.status(400).json({erro:"Nenhuma alteração informada."}); vals.push(id,req.auth.empresaId); const [r]=await db.query(`UPDATE usuarios SET ${campos.join(",")} WHERE id=? AND empresa_id=?`,vals); if(!r.affectedRows)return res.status(404).json({erro:"Usuário não encontrado."});res.json({message:"Usuário atualizado."}); }catch(err){handleDbError(res,err,"Não foi possível atualizar o usuário.");} });
 
 // Cadastros ------------------------------------------------------------------
-app.get("/colaboradores", authOpcional, async(req,res)=>{try{const[rows]=await db.query("SELECT * FROM colaboradores WHERE empresa_id=? ORDER BY nome",[req.auth.empresaId]);res.json(rows)}catch(err){handleDbError(res,err)}});
+app.get("/colaboradores", authOpcional, async(req,res)=>{try{const q=req.query.todos==="1"?"":" AND ativo=1";const[rows]=await db.query(`SELECT * FROM colaboradores WHERE empresa_id=?${q} ORDER BY nome`,[req.auth.empresaId]);res.json(rows)}catch(err){handleDbError(res,err)}});
 app.get("/clientes", authOpcional, async(req,res)=>{try{const[rows]=await db.query("SELECT * FROM clientes WHERE empresa_id=? ORDER BY nome",[req.auth.empresaId]);res.json(rows)}catch(err){handleDbError(res,err)}});
 app.get("/gestores", authOpcional, async(req,res)=>{try{const[rows]=await db.query("SELECT * FROM gestores WHERE empresa_id=? ORDER BY nome",[req.auth.empresaId]);res.json(rows)}catch(err){handleDbError(res,err)}});
 app.get("/materiais", authOpcional, async(req,res)=>{try{const q=req.query.todos==="1"?"":" AND ativo=1";const[rows]=await db.query(`SELECT * FROM materiais WHERE empresa_id=?${q} ORDER BY nome`,[req.auth.empresaId]);res.json(rows)}catch(err){handleDbError(res,err)}});
@@ -527,6 +554,14 @@ app.post("/gestao/materiais/importar",autenticar,exigirPerfil("ADMIN","GESTOR"),
   }
   res.status(201).json({ message: `${criados} material(is) importado(s) com sucesso.`, criados, ignorados, erros });
 });
+
+// Colaboradores (técnicos) --------------------------------------------
+// Igual materiais: nunca excluídos de verdade (têm OS/despesas/pontos de
+// GPS vinculados no histórico) — "excluir" aqui desativa, pra sumir dos
+// seletores de nova OS sem perder nada do que já foi registrado.
+app.put("/gestao/colaboradores/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{const{id}=req.params;if(!validarId(id))return res.status(400).json({erro:"ID inválido."});const{nome,ativo}=req.body;if(!String(nome||"").trim())return res.status(400).json({erro:"O campo 'nome' é obrigatório."});try{const[r]=await db.query("UPDATE colaboradores SET nome=?,ativo=? WHERE id=? AND empresa_id=?",[String(nome).trim(),ativo===false||ativo===0?0:1,id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Técnico não encontrado."});res.json({message:"Técnico atualizado com sucesso."})}catch(err){handleDbError(res,err)}});
+app.delete("/gestao/colaboradores/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[r]=await db.query("UPDATE colaboradores SET ativo=0 WHERE id=? AND empresa_id=?",[req.params.id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Técnico não encontrado."});res.json({message:"Técnico desativado com sucesso."})}catch(err){handleDbError(res,err)}});
+app.patch("/gestao/colaboradores/:id/reativar",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[r]=await db.query("UPDATE colaboradores SET ativo=1 WHERE id=? AND empresa_id=?",[req.params.id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Técnico não encontrado."});res.json({message:"Técnico reativado com sucesso."})}catch(err){handleDbError(res,err)}});
 
 app.post("/gestao/:tipo",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{const{tipo}=req.params;if(!tipoValido(tipo))return res.status(400).json({erro:`Tipo inválido: ${tipo}`});const{nome,rua,bairro,cidade,telefone}=req.body;if(!String(nome||"").trim())return res.status(400).json({erro:"O campo 'nome' é obrigatório."});try{const[r]=tipo==="clientes"?await db.query("INSERT INTO clientes (empresa_id,nome,rua,bairro,cidade,telefone) VALUES (?,?,?,?,?,?)",[req.auth.empresaId,String(nome).trim(),rua||null,bairro||null,cidade||null,telefone||null]):await db.query(`INSERT INTO ${tipo} (empresa_id,nome) VALUES (?,?)`,[req.auth.empresaId,String(nome).trim()]);res.status(201).json({id:r.insertId,message:"Cadastro criado com sucesso."})}catch(err){handleDbError(res,err)}});
 app.put("/gestao/:tipo/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{const{tipo,id}=req.params;if(!tipoValido(tipo)||!validarId(id))return res.status(400).json({erro:"Tipo ou ID inválido."});const{nome,rua,bairro,cidade,telefone}=req.body;if(!String(nome||"").trim())return res.status(400).json({erro:"O campo 'nome' é obrigatório."});try{const[r]=tipo==="clientes"?await db.query("UPDATE clientes SET nome=?,rua=?,bairro=?,cidade=?,telefone=? WHERE id=? AND empresa_id=?",[String(nome).trim(),rua||null,bairro||null,cidade||null,telefone||null,id,req.auth.empresaId]):await db.query(`UPDATE ${tipo} SET nome=? WHERE id=? AND empresa_id=?`,[String(nome).trim(),id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Registro não encontrado."});res.json({message:"Cadastro atualizado com sucesso."})}catch(err){handleDbError(res,err)}});
@@ -742,6 +777,12 @@ app.post("/servico/finalizar",autenticar,async(req,res)=>{
     await registrarStatus(os_id,"FINALIZADA",conn);
     await conn.commit();
     res.json({message:"Ordem de serviço finalizada com sucesso.",id:Number(os_id),fotos:fotosSalvas,status:"FINALIZADA"});
+    Promise.all([
+      db.query("SELECT nome FROM colaboradores WHERE id=?",[tecnico_id]),
+      db.query("SELECT nome FROM clientes WHERE id=?",[cliente_id]),
+    ]).then(([[[t]],[[c]]])=>{
+      enviarPushParaGestores(req.auth.empresaId,"OS finalizada",`${t?.nome||"Um técnico"} finalizou a OS #${os_id} (${c?.nome||"cliente"}).`,{tipo:"os_finalizada",os_id:Number(os_id)});
+    }).catch(()=>{});
   }catch(err){
     try{await conn.rollback()}catch(_){}
     fotosSalvas.forEach(f=>excluirArquivosFotos(JSON.stringify([f])));
@@ -780,6 +821,12 @@ app.post("/materiais/solicitacoes",autenticar,exigirPerfil("TECNICO","GESTOR","A
         ids.push(r.insertId);
       }
       await conn.commit();res.status(201).json({message:"Solicitação de material enviada.",ids});
+      Promise.all([
+        db.query("SELECT nome FROM colaboradores WHERE id=?",[tecnico_id]),
+        db.query("SELECT nome FROM clientes WHERE id=?",[cliente_id]),
+      ]).then(([[[t]],[[c]]])=>{
+        enviarPushParaGestores(req.auth.empresaId,"Nova solicitação de material",`${t?.nome||"Um técnico"} pediu material para ${c?.nome||"um cliente"}.`,{tipo:"solicitacao_material"});
+      }).catch(()=>{});
     }catch(err){await conn.rollback();throw err}finally{conn.release()}
   }catch(err){if(err.message?.includes("inválid")||err.message?.includes("disponível"))return res.status(400).json({erro:err.message});handleDbError(res,err,"Não foi possível solicitar os materiais.")}
 });
@@ -810,12 +857,13 @@ app.post("/despesas",autenticar,async(req,res)=>{
   if(!TIPOS_DESPESA_VALIDOS.includes(tn))return res.status(400).json({erro:`Tipo de despesa inválido. Use um de: ${TIPOS_DESPESA_VALIDOS.join(", ")}.`});
   const vn=Number(valor);if(!Number.isFinite(vn)||vn<=0)return res.status(400).json({erro:"Valor inválido."});
   try{
-    const[[t]]=await db.query("SELECT id FROM colaboradores WHERE id=? AND empresa_id=?",[tecnico_id,req.auth.empresaId]);
-    const[[c]]=await db.query("SELECT id FROM clientes WHERE id=? AND empresa_id=?",[cliente_id,req.auth.empresaId]);
+    const[[t]]=await db.query("SELECT id,nome FROM colaboradores WHERE id=? AND empresa_id=?",[tecnico_id,req.auth.empresaId]);
+    const[[c]]=await db.query("SELECT id,nome FROM clientes WHERE id=? AND empresa_id=?",[cliente_id,req.auth.empresaId]);
     if(!t||!c)return res.status(404).json({erro:"Técnico ou cliente não encontrado."});
     let foto=null;if(foto_recibo){foto=typeof foto_recibo==="string"&&foto_recibo.startsWith("/uploads/")?foto_recibo:salvarFotoBase64(foto_recibo,"recibo");if(!foto)return res.status(400).json({erro:"Foto do recibo inválida ou maior que 5 MB."})}
     const[r]=await db.query("INSERT INTO despesas (empresa_id,servico_id,cliente_id,tecnico_id,tipo,valor,descricao,numero_nota,foto_recibo,cobrar_do_cliente) VALUES (?,NULL,?,?,?,?,?,?,?,?)",[req.auth.empresaId,cliente_id,tecnico_id,tn,vn,descricao?String(descricao).trim():null,numero_nota?String(numero_nota).trim():null,foto,cobrar_do_cliente===false||cobrar_do_cliente===0?0:1]);
     res.status(201).json({id:r.insertId,message:"Despesa registrada com sucesso."});
+    enviarPushParaGestores(req.auth.empresaId,"Nova despesa lançada",`${t.nome} lançou uma despesa de R$ ${vn.toFixed(2)} (${c.nome}).`,{tipo:"despesa"});
   }catch(err){handleDbError(res,err,"Não foi possível registrar a despesa.")}
 });
 app.get("/despesas",autenticar,async(req,res)=>{
