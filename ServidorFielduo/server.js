@@ -641,7 +641,7 @@ app.get("/gestao/relatorios/:id/pdf",autenticar,exigirPerfil("ADMIN","GESTOR"),a
 
     const fotos = normalizarFotos(os.foto_conclusao);
     if (fotos.length) {
-      doc.addPage();
+      if (doc.y + 150 > doc.page.height - doc.page.margins.bottom) doc.addPage();
       doc.fontSize(13).fillColor("#152238").text("Fotos do serviço");
       doc.moveDown(0.4);
       const larguraImg = 160, alturaImg = 120, gap = 14;
@@ -654,9 +654,10 @@ app.get("/gestao/relatorios/:id/pdf",autenticar,exigirPerfil("ADMIN","GESTOR"),a
         try { doc.image(buffer, x, y, { fit: [larguraImg, alturaImg] }); } catch (_) {}
         x += larguraImg + gap;
       }
+      doc.y = y + alturaImg + gap;
     }
 
-    doc.addPage();
+    if (doc.y + 170 > doc.page.height - doc.page.margins.bottom) doc.addPage();
     doc.fontSize(13).fillColor("#152238").text("Assinatura de quem recebeu o serviço");
     doc.moveDown(0.5);
     const bufferAssinatura = bufferDaImagem(os.cliente_assinatura);
