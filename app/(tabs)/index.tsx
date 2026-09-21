@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Alert, ScrollView, Text, TouchableOpacity, View } from "react-native";
 
 import { useSincronizacaoOffline } from "@/lib/offlineQueue";
-import { Cliente, Gestor, Tecnico } from "@/lib/osTypes";
+import { Cliente, Gestor, Tecnico, Veiculo } from "@/lib/osTypes";
 
 import { useAuthContext } from "@/hooks/useAuth";
 import { useCadastros } from "@/hooks/useCadastros";
@@ -33,10 +33,12 @@ export default function HomeScreen() {
   const [tecnicoSel, setTecnicoSel] = useState<Tecnico | null>(null);
   const [clienteSel, setClienteSel] = useState<Cliente | null>(null);
   const [gestorSel, setGestorSel] = useState<Gestor | null>(null);
+  const [veiculoSel, setVeiculoSel] = useState<Veiculo | null>(null);
 
   const [modalTecnico, setModalTecnico] = useState(false);
   const [modalCliente, setModalCliente] = useState(false);
   const [modalGestor, setModalGestor] = useState(false);
+  const [modalVeiculo, setModalVeiculo] = useState(false);
   const [modalAssinatura, setModalAssinatura] = useState(false);
 
   const signatureRef = useRef<any>(null);
@@ -65,10 +67,17 @@ export default function HomeScreen() {
 
   function handleRetomarOS(os: any) {
     osAtual.abrirOS(os);
+    // Essencial: sem isso, clienteSel/gestorSel/tecnicoSel ficavam nulos ao
+    // reabrir uma OS já existente (só eram preenchidos ao CRIAR uma OS
+    // nova), e finalizar() quebrava tentando ler .id de null.
+    if (os.cliente_id) setClienteSel({ id: os.cliente_id, nome: os.cliente_nome });
+    if (os.gestor_id) setGestorSel({ id: os.gestor_id, nome: os.gestor_nome });
+    if (os.tecnico_id && !tecnicoSel) setTecnicoSel({ id: os.tecnico_id, nome: os.tecnico_nome || "" });
+    setVeiculoSel(os.veiculo_id ? { id: os.veiculo_id, nome: os.veiculo_nome, placa: os.veiculo_placa } : null);
   }
 
   function handleCriarOS() {
-    osAtual.criarOS({ tecnicoSel, clienteSel, gestorSel });
+    osAtual.criarOS({ tecnicoSel, clienteSel, gestorSel, veiculoSel });
   }
 
   function handleFinalizar() {
@@ -76,6 +85,7 @@ export default function HomeScreen() {
       if (podeCriarOS) {
         setClienteSel(null);
         setGestorSel(null);
+        setVeiculoSel(null);
       }
       if (tecnicoSel) buscarMinhasOS(tecnicoSel.id);
     });
@@ -128,9 +138,11 @@ export default function HomeScreen() {
           tecnicoSel={tecnicoSel}
           clienteSel={clienteSel}
           gestorSel={gestorSel}
+          veiculoSel={veiculoSel}
           onAbrirTecnico={() => setModalTecnico(true)}
           onAbrirCliente={() => setModalCliente(true)}
           onAbrirGestor={() => setModalGestor(true)}
+          onAbrirVeiculo={() => setModalVeiculo(true)}
           criandoOS={osAtual.criandoOS}
           mensagemEnvio={osAtual.mensagemEnvio}
           onCriarOS={handleCriarOS}
@@ -213,6 +225,17 @@ export default function HomeScreen() {
             renderLabel={(g) => g.nome}
             onSelect={(g) => { setGestorSel(g); setModalGestor(false); }}
             onClose={() => setModalGestor(false)}
+          />
+
+          <SelectionModal
+            visible={modalVeiculo}
+            title="Veículos"
+            items={cadastros.veiculos}
+            emptyMessage="Nenhum veículo cadastrado. Peça ao gestor para cadastrar no painel web."
+            keyExtractor={(v) => v.id}
+            renderLabel={(v) => v.placa ? `${v.nome} (${v.placa})` : v.nome}
+            onSelect={(v) => { setVeiculoSel(v); setModalVeiculo(false); }}
+            onClose={() => setModalVeiculo(false)}
           />
         </>
       )}

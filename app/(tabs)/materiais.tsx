@@ -6,7 +6,7 @@ import { useCadastros } from "@/hooks/useCadastros";
 import { useSolicitacaoMateriais } from "@/hooks/useSolicitacaoMateriais";
 import { Cliente, Material } from "@/lib/osTypes";
 import { SelectionModal } from "@/components/os/SelectionModal";
-const C={bg:'#F5F7FB',card:'#fff',ink:'#152238',muted:'#687386',navy:'#0F2747',accent:'#1677FF',line:'#E4E9F0',danger:'#D64545'};
+const C={bg:'#F5F7FB',card:'#fff',ink:'#152238',muted:'#687386',navy:'#16233B',accent:'#FF7A29',line:'#E4E9F0',danger:'#D64545'};
 export default function MateriaisScreen(){const{auth}=useAuthContext();const cad=useCadastros();const f=useSolicitacaoMateriais();const[clienteModal,setClienteModal]=useState(false);const[materialModal,setMaterialModal]=useState(false);const tecnicoId=auth?.usuario?.colaborador_id;
  return <ScrollView contentContainerStyle={s.container}><View style={s.header}><View><Text style={s.kicker}>LOGÍSTICA</Text><Text style={s.title}>Solicitar material</Text><Text style={s.sub}>Faça o pedido antes do atendimento para agilizar o serviço.</Text></View><View style={s.icon}><Feather name="package" size={23} color="#fff"/></View></View>
  <View style={s.card}><Text style={s.section}>1. Selecione o cliente</Text><TouchableOpacity style={s.select} onPress={()=>setClienteModal(true)}><Feather name="briefcase" size={18} color={C.muted}/><Text style={s.selectText}>{f.cliente?f.cliente.nome:'Selecionar cliente'}</Text><Feather name="chevron-down" size={18} color={C.muted}/></TouchableOpacity>

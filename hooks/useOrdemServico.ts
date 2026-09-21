@@ -1,3 +1,4 @@
+import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { useState } from "react";
 import { Alert } from "react-native";
@@ -7,7 +8,7 @@ import { fetchComRetentativa } from "@/lib/httpRetry";
 import { executarOuEnfileirar } from "@/lib/offlineQueue";
 import { Horarios } from "@/lib/osTypes";
 
-type Selecao = { tecnicoSel: any; clienteSel: any; gestorSel: any };
+type Selecao = { tecnicoSel: any; clienteSel: any; gestorSel: any; veiculoSel?: any };
 
 // Concentra tudo que gira em torno de UMA ordem de serviço em andamento:
 // os dados dela (id, status, horários), a etapa do wizard (1 = escolher
@@ -68,8 +69,8 @@ export function useOrdemServico() {
     }
 
     const options: ImagePicker.ImagePickerOptions = {
-      quality: 0.35,
-      base64: true,
+      quality: 0.7,
+      base64: false,
       allowsMultipleSelection: origem === "galeria",
       selectionLimit: Math.max(1, 10 - fotos.length),
     };
@@ -79,26 +80,41 @@ export function useOrdemServico() {
         ? await ImagePicker.launchCameraAsync(options)
         : await ImagePicker.launchImageLibraryAsync(options);
 
-    if (!result.canceled) {
-      const novas = result.assets
-        .map((a) => a.base64)
-        .filter((b) => b) as string[];
-      setFotos((prev) => [...prev, ...novas].slice(0, 10));
+    if (result.canceled) return;
+
+    // Redimensiona pra no máximo 1280px de largura e recomprime. Fotos de
+    // câmeras modernas (12MP+) ficavam grandes demais em base64 mesmo com
+    // qualidade baixa na captura — isso derrubava o envio em conexões mais
+    // lentas (o "Falha ao enviar dados" mesmo com o servidor no ar). Reduz
+    // cada foto pra geralmente uns 100-300KB, bem mais rápido de enviar.
+    const novas: string[] = [];
+    for (const asset of result.assets) {
+      try {
+        const manipulado = await ImageManipulator.manipulateAsync(
+          asset.uri,
+          [{ resize: { width: 1280 } }],
+          { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG, base64: true },
+        );
+        if (manipulado.base64) novas.push(manipulado.base64);
+      } catch (e) {
+        console.warn("Não foi possível comprimir uma foto:", e);
+      }
     }
+    setFotos((prev) => [...prev, ...novas].slice(0, 10));
   };
 
   function removerFoto(index: number) {
     setFotos((prev) => prev.filter((_, i) => i !== index));
   }
 
-  async function criarOS({ tecnicoSel, clienteSel, gestorSel }: Selecao, aoCriar?: () => void) {
+  async function criarOS({ tecnicoSel, clienteSel, gestorSel, veiculoSel }: Selecao, aoCriar?: () => void) {
     if (!tecnicoSel || !clienteSel || !gestorSel) return Alert.alert("Aviso", "Preencha Técnico, Cliente e Gestor.");
     setCriandoOS(true);
     setMensagemEnvio(null);
     try {
       const response = await fetchComRetentativa(`${API_URL}/servico/criar`, {
         method: "POST", headers: apiHeaders(),
-        body: JSON.stringify({ tecnico_id: tecnicoSel.id, cliente_id: clienteSel.id, gestor_id: gestorSel.id }),
+        body: JSON.stringify({ tecnico_id: tecnicoSel.id, cliente_id: clienteSel.id, gestor_id: gestorSel.id, veiculo_id: veiculoSel?.id ?? null }),
       }, {
         aoTentarNovamente: () => setMensagemEnvio("Servidor demorando a responder — tentando de novo..."),
       });
@@ -186,22 +202,39 @@ export function useOrdemServico() {
 
     setCarregando(true);
     setMensagemEnvio(null);
+
+    // O corpo é montado FORA do try de rede: se falhar aqui (payload grande
+    // demais, por exemplo), o erro é de montagem, não de conexão — misturar
+    // os dois estava escondendo a causa real por trás de "falha ao enviar".
+    let corpo: string;
+    try {
+      corpo = JSON.stringify({
+        os_id: osId,
+        tecnico_id: tecnicoSel.id,
+        cliente_id: clienteSel.id,
+        gestor_id: gestorSel.id,
+        relatorio,
+        fotos: JSON.stringify(fotos),
+        cliente_nome_completo: nomeClienteFinal,
+        cliente_assinatura: assinaturaBase64,
+      });
+    } catch (e: any) {
+      setCarregando(false);
+      return Alert.alert(
+        "Erro ao preparar o envio",
+        `Não foi possível montar os dados da OS (provavelmente as fotos estão grandes demais).\n\nDetalhe: ${e?.name || "Erro"} — ${e?.message || "sem mensagem"}`,
+      );
+    }
+
+    const tamanhoMb = (corpo.length / (1024 * 1024)).toFixed(2);
+
     try {
       const response = await fetchComRetentativa(
         `${API_URL}/servico/finalizar`,
         {
           method: "POST",
           headers: apiHeaders(),
-          body: JSON.stringify({
-            os_id: osId,
-            tecnico_id: tecnicoSel.id,
-            cliente_id: clienteSel.id,
-            gestor_id: gestorSel.id,
-            relatorio,
-            fotos: JSON.stringify(fotos),
-            cliente_nome_completo: nomeClienteFinal,
-            cliente_assinatura: assinaturaBase64,
-          }),
+          body: corpo,
         },
         { aoTentarNovamente: () => setMensagemEnvio("Servidor demorando a responder — tentando de novo, não feche o app...") },
       );
@@ -222,10 +255,15 @@ export function useOrdemServico() {
         setAssinaturaBase64(null);
             aoFinalizar?.();
       } else {
-        Alert.alert("Erro", dados.erro || "O servidor recusou os dados.");
+        Alert.alert("Erro", dados.erro || `O servidor recusou os dados (HTTP ${response.status}).`);
       }
-    } catch (e) {
-      Alert.alert("Erro", "Não foi possível falar com o servidor depois de várias tentativas. Confira sua conexão — os dados preenchidos continuam na tela, você pode tentar 'Finalizar e Enviar' de novo.");
+    } catch (e: any) {
+      // Mostra o erro REAL — sem isso, qualquer falha virava "problema de
+      // conexão" e ficava impossível diagnosticar.
+      Alert.alert(
+        "Erro ao enviar",
+        `Envio de ${tamanhoMb} MB falhou.\n\nDetalhe: ${e?.name || "Erro"} — ${e?.message || "sem mensagem"}\n\nOs dados continuam na tela, você pode tentar de novo.`,
+      );
     } finally {
       setCarregando(false);
       setMensagemEnvio(null);

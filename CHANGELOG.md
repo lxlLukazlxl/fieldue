@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.3.2
+- **Possível causa raiz definitiva do erro ao finalizar OS**: fotos de
+  câmeras modernas, mesmo com qualidade reduzida na captura, ainda saem
+  grandes demais em base64 — isso demorava demais pra enviar em conexões
+  mais lentas e estourava timeout mesmo com o servidor no ar. Agora cada
+  foto é redimensionada (máx. 1280px de largura) e recomprimida antes de
+  guardar, reduzindo bastante o tamanho de cada uma.
+- Notificação push também pros gestores/admins: quando um técnico
+  finaliza uma OS, solicita material ou lança uma despesa.
+- Painel web: técnicos agora podem ser desativados (e reativados) em vez
+  de excluídos de verdade — evita o erro de "existem registros
+  relacionados" pra quem já tem OS no histórico. Usuários (login) agora
+  podem ser excluídos de verdade (com proteção pra não excluir a si mesmo
+  nem o último administrador da empresa).
+- App: paleta de cores unificada entre todas as telas (Dashboard,
+  Materiais, Despesas usavam um azul diferente do resto do app).
+
 ## 2.3.1
 - **Correção crítica**: finalizar uma OS com fotos estava dando timeout
   sempre (Wi-Fi ou dados), mesmo com o servidor no ar. Causa: as fotos

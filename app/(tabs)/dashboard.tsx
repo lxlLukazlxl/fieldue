@@ -4,7 +4,7 @@ import { ActivityIndicator, RefreshControl, ScrollView, Text, View, TouchableOpa
 import { API_URL, apiHeaders } from "@/constants/api";
 import { useAuthContext } from "@/hooks/useAuth";
 
-const C = { bg:"#F5F7FB", card:"#FFFFFF", ink:"#152238", muted:"#687386", navy:"#0F2747", accent:"#1677FF", line:"#E4E9F0", green:"#149447", orange:"#D98200" };
+const C = { bg:"#F5F7FB", card:"#FFFFFF", ink:"#152238", muted:"#687386", navy:"#16233B", accent:"#FF7A29", line:"#E4E9F0", green:"#149447", orange:"#D98200" };
 export default function DashboardTecnico(){
  const {auth}=useAuthContext(); const [d,setD]=useState<any>(null); const [loading,setLoading]=useState(true); const [refreshing,setRefreshing]=useState(false);
  const carregar=useCallback(async()=>{try{const r=await fetch(`${API_URL}/tecnico/dashboard`,{headers:apiHeaders()});if(r.ok)setD(await r.json());}catch(e){console.warn(e)}finally{setLoading(false);setRefreshing(false)}},[]);

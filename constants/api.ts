@@ -12,7 +12,7 @@
 import { getToken } from "@/lib/authToken";
 
 export const API_URL =
-  process.env.EXPO_PUBLIC_API_URL || "http://192.168.3.11:3000";
+  process.env.EXPO_PUBLIC_API_URL || "https://fielduo.onrender.com";
 
 export const API_KEY = "";
 

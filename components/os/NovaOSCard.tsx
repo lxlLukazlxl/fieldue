@@ -4,7 +4,7 @@ import { Text, TouchableOpacity, View } from "react-native";
 
 import { GradientFill } from "@/components/GradientFill";
 import { coresStatus, labelsStatus } from "@/lib/statusOS";
-import { Cliente, Gestor, Tecnico } from "@/lib/osTypes";
+import { Cliente, Gestor, Tecnico, Veiculo } from "@/lib/osTypes";
 import { COLORS, GRADIENTS, styles } from "./styles";
 
 type Props = {
@@ -13,9 +13,11 @@ type Props = {
   tecnicoSel: Tecnico | null;
   clienteSel: Cliente | null;
   gestorSel: Gestor | null;
+  veiculoSel: Veiculo | null;
   onAbrirTecnico: () => void;
   onAbrirCliente: () => void;
   onAbrirGestor: () => void;
+  onAbrirVeiculo: () => void;
   criandoOS: boolean;
   mensagemEnvio?: string | null;
   onCriarOS: () => void;
@@ -26,8 +28,8 @@ type Props = {
 
 export function NovaOSCard({
   podeCriarOS,
-  tecnicoSel, clienteSel, gestorSel,
-  onAbrirTecnico, onAbrirCliente, onAbrirGestor,
+  tecnicoSel, clienteSel, gestorSel, veiculoSel,
+  onAbrirTecnico, onAbrirCliente, onAbrirGestor, onAbrirVeiculo,
   criandoOS, mensagemEnvio, onCriarOS,
   minhasOS, carregandoMinhasOS, onRetomarOS,
 }: Props) {
@@ -60,6 +62,13 @@ export function NovaOSCard({
             <Feather name="shield" size={17} color={COLORS.muted} />
             <Text style={styles.selText}>
               {gestorSel ? `Gestor: ${gestorSel.nome}` : "Selecionar Gestor (Obrigatório)"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.sel} onPress={onAbrirVeiculo}>
+            <Feather name="truck" size={17} color={COLORS.muted} />
+            <Text style={styles.selText}>
+              {veiculoSel ? `Veículo: ${veiculoSel.nome}${veiculoSel.placa ? ` (${veiculoSel.placa})` : ""}` : "Selecionar Veículo (opcional)"}
             </Text>
           </TouchableOpacity>
 

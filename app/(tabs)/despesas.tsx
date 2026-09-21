@@ -8,7 +8,7 @@ import { useCadastros } from "@/hooks/useCadastros";
 import { useDespesaAvulsa } from "@/hooks/useDespesaAvulsa";
 import { Cliente } from "@/lib/osTypes";
 
-const C = { bg: "#F5F7FB", card: "#fff", ink: "#152238", muted: "#687386", navy: "#0F2747", accent: "#1677FF", line: "#E4E9F0", danger: "#D64545", success: "#1D9A6C" };
+const C = { bg: "#F5F7FB", card: "#fff", ink: "#152238", muted: "#687386", navy: "#16233B", accent: "#FF7A29", line: "#E4E9F0", danger: "#D64545", success: "#1D9A6C" };
 
 const LABELS_TIPO: Record<string, string> = {
   PEDAGIO: "Pedágio",

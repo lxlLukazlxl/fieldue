@@ -7,6 +7,7 @@ export type Tecnico = { id: number; nome: string };
 export type Cliente = { id: number; nome: string; bairro?: string };
 export type Gestor = { id: number; nome: string };
 export type Material = { id: number; nome: string; unidade: string };
+export type Veiculo = { id: number; nome: string; placa?: string | null };
 
 export type MaterialSolicitado = {
   id: number | string;

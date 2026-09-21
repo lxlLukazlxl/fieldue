@@ -210,7 +210,8 @@ async function tecnicoPodeAcessarOS(req, os) {
 const TABELAS_PERMITIDAS = ["colaboradores", "clientes", "gestores"];
 function tipoValido(tipo) { return TABELAS_PERMITIDAS.includes(tipo); }
 
-async function salvarFotoBase64Async(base64, indice) {
+// Salva uma foto/assinatura recebida em base64 no disco local do servidor.
+async function salvarFotoBase64(base64, indice) {
   if (typeof base64 !== "string" || !base64.trim()) return null;
   const match = base64.match(/^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/i);
   const dados = match ? match[2] : base64;
@@ -222,25 +223,13 @@ async function salvarFotoBase64Async(base64, indice) {
   await fs.promises.writeFile(path.join(UPLOAD_DIR, nome), buffer);
   return `/uploads/${nome}`;
 }
-function salvarFotoBase64(base64, indice) {
-  if (typeof base64 !== "string" || !base64.trim()) return null;
-  const match = base64.match(/^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/i);
-  const dados = match ? match[2] : base64;
-  const extensao = match ? (match[1].toLowerCase() === "jpg" ? "jpg" : match[1].toLowerCase()) : "jpg";
-  if (!/^[A-Za-z0-9+/=\r\n]+$/.test(dados)) return null;
-  const buffer = Buffer.from(dados, "base64");
-  if (!buffer.length || buffer.length > 5 * 1024 * 1024) return null;
-  const nome = `${Date.now()}-${crypto.randomBytes(5).toString("hex")}-${indice}.${extensao}`;
-  fs.writeFileSync(path.join(UPLOAD_DIR, nome), buffer);
-  return `/uploads/${nome}`;
-}
-// Lê uma foto/assinatura como Buffer, seja ela um caminho salvo em disco
-// (/uploads/...) ou uma string base64/data-url — usado na geração do PDF.
 function labelsStatusOSPdf(status) {
   const mapa = { ATRIBUIDA: "Atribuída", ACEITA: "Aceita", EM_DESLOCAMENTO: "Em deslocamento", NO_LOCAL: "No local", EM_ATENDIMENTO: "Em atendimento", EM_ALMOCO: "Em horário de almoço", FINALIZADA: "Finalizada", CANCELADA: "Cancelada" };
   return mapa[status] || status || "—";
 }
-function bufferDaImagem(valor) {
+// Lê uma foto/assinatura como Buffer, seja ela um caminho salvo em disco
+// (/uploads/...) ou uma string base64/data-url — usado na geração do PDF.
+async function bufferDaImagem(valor) {
   if (typeof valor !== "string" || !valor.trim()) return null;
   try {
     if (valor.startsWith("/uploads/")) {
@@ -315,6 +304,7 @@ async function inicializarBanco() {
     clientes: `CREATE TABLE IF NOT EXISTS clientes (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(180) NOT NULL, rua VARCHAR(255), bairro VARCHAR(150), cidade VARCHAR(150), telefone VARCHAR(40)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     gestores: `CREATE TABLE IF NOT EXISTS gestores (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(150) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     pontos: `CREATE TABLE IF NOT EXISTS pontos (id INT AUTO_INCREMENT PRIMARY KEY, tecnico_id INT NOT NULL, os_id INT NULL, latitude DOUBLE NOT NULL, longitude DOUBLE NOT NULL, dataHora DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_pontos_tecnico_data (tecnico_id,dataHora)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    veiculos: `CREATE TABLE IF NOT EXISTS veiculos (id INT AUTO_INCREMENT PRIMARY KEY, empresa_id INT NOT NULL, nome VARCHAR(120) NOT NULL, placa VARCHAR(20) NULL, ativo TINYINT(1) NOT NULL DEFAULT 1, criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_veiculos_empresa(empresa_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     servicos: `CREATE TABLE IF NOT EXISTS servicos (id INT AUTO_INCREMENT PRIMARY KEY, tecnico_id INT NOT NULL, cliente_id INT NOT NULL, gestor_id INT NOT NULL, relatorio TEXT, foto_conclusao LONGTEXT, cliente_nome_completo VARCHAR(180), cliente_assinatura LONGTEXT, status VARCHAR(40) NOT NULL DEFAULT 'ATRIBUIDA', criada_data DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, aceita_data DATETIME NULL, deslocamento_data DATETIME NULL, chegada_data DATETIME NULL, inicio_data DATETIME NULL, almoco_inicio_data DATETIME NULL, almoco_fim_data DATETIME NULL, fim_data DATETIME NULL, INDEX idx_servicos_status_data(status,fim_data), INDEX idx_servicos_tecnico(tecnico_id), INDEX idx_servicos_cliente(cliente_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     servico_status_historico: `CREATE TABLE IF NOT EXISTS servico_status_historico (id INT AUTO_INCREMENT PRIMARY KEY, servico_id INT NOT NULL, status VARCHAR(40) NOT NULL, dataHora DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_historico_servico_data(servico_id,dataHora)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     materiais: `CREATE TABLE IF NOT EXISTS materiais (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(180) NOT NULL, unidade VARCHAR(20) NOT NULL DEFAULT 'un', preco DECIMAL(10,2) NOT NULL DEFAULT 0, estoque DECIMAL(10,2) NULL, ativo TINYINT(1) NOT NULL DEFAULT 1) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
@@ -325,7 +315,7 @@ async function inicializarBanco() {
   for (const sql of Object.values(tabelas)) await db.query(sql);
 
   const servicoCols = [
-    ["criada_data","DATETIME NULL"],["aceita_data","DATETIME NULL"],["deslocamento_data","DATETIME NULL"],["chegada_data","DATETIME NULL"],["inicio_data","DATETIME NULL"],["almoco_inicio_data","DATETIME NULL"],["almoco_fim_data","DATETIME NULL"],["fim_data","DATETIME NULL"]
+    ["criada_data","DATETIME NULL"],["aceita_data","DATETIME NULL"],["deslocamento_data","DATETIME NULL"],["chegada_data","DATETIME NULL"],["inicio_data","DATETIME NULL"],["almoco_inicio_data","DATETIME NULL"],["almoco_fim_data","DATETIME NULL"],["fim_data","DATETIME NULL"],["veiculo_id","INT NULL"]
   ];
   for (const [nome,tipo] of servicoCols) if (!(await colunaExiste("servicos",nome))) await db.query(`ALTER TABLE servicos ADD COLUMN ${nome} ${tipo}`);
   if (!(await colunaExiste("despesas","numero_nota"))) await db.query("ALTER TABLE despesas ADD COLUMN numero_nota VARCHAR(100) NULL AFTER descricao");
@@ -339,6 +329,8 @@ async function inicializarBanco() {
   if (!(await colunaExiste("usuarios","colaborador_id"))) await db.query("ALTER TABLE usuarios ADD COLUMN colaborador_id INT NULL");
   if (!(await colunaExiste("usuarios","push_token"))) await db.query("ALTER TABLE usuarios ADD COLUMN push_token VARCHAR(255) NULL");
   if (!(await colunaExiste("colaboradores","ativo"))) await db.query("ALTER TABLE colaboradores ADD COLUMN ativo TINYINT(1) NOT NULL DEFAULT 1");
+  if (!(await colunaExiste("colaboradores","custo_hora"))) await db.query("ALTER TABLE colaboradores ADD COLUMN custo_hora DECIMAL(10,2) NULL");
+  if (!(await colunaExiste("veiculos","custo_km"))) await db.query("ALTER TABLE veiculos ADD COLUMN custo_km DECIMAL(10,2) NULL");
   const [[histNull]] = await db.query("SELECT COUNT(*) total FROM servico_status_historico WHERE empresa_id IS NULL");
   if (Number(histNull.total) > 0) { const empresa = await buscarEmpresaPadrao(); await db.query("UPDATE servico_status_historico h JOIN servicos s ON s.id=h.servico_id SET h.empresa_id=s.empresa_id WHERE h.empresa_id IS NULL"); }
   try { await db.query("ALTER TABLE servico_status_historico MODIFY empresa_id INT NOT NULL"); } catch (_) {}
@@ -457,6 +449,154 @@ app.delete("/auth/usuarios/:id", autenticar, exigirPerfil("ADMIN"), async(req,re
   }catch(err){handleDbError(res,err,"Não foi possível excluir o usuário.");}
 });
 
+// Distância entre dois pontos GPS (fórmula de Haversine), em km.
+function distanciaKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+app.get("/gestao/relatorios/:id/km", autenticar, exigirPerfil("ADMIN","GESTOR"), async(req,res)=>{
+  if (!validarId(req.params.id)) return res.status(400).json({erro:"ID inválido."});
+  try {
+    const [pontos] = await db.query(
+      "SELECT p.latitude,p.longitude,p.dataHora FROM pontos p JOIN servicos s ON s.id=p.os_id WHERE p.os_id=? AND s.empresa_id=? ORDER BY p.dataHora ASC",
+      [req.params.id, req.auth.empresaId]
+    );
+    let km = 0;
+    for (let i = 1; i < pontos.length; i++) {
+      km += distanciaKm(pontos[i-1].latitude, pontos[i-1].longitude, pontos[i].latitude, pontos[i].longitude);
+    }
+    res.json({ km: Number(km.toFixed(2)), pontos: pontos.length });
+  } catch (err) { handleDbError(res,err); }
+});
+app.get("/gestao/veiculos/:id/km", autenticar, exigirPerfil("ADMIN","GESTOR"), async(req,res)=>{
+  if (!validarId(req.params.id)) return res.status(400).json({erro:"ID inválido."});
+  const inicio = req.query.inicio || null, fim = req.query.fim || null;
+  try {
+    const cond = ["s.empresa_id=?","s.veiculo_id=?"], vals = [req.auth.empresaId, req.params.id];
+    if (inicio) { cond.push("p.dataHora>=?"); vals.push(inicio); }
+    if (fim) { cond.push("p.dataHora<=?"); vals.push(fim); }
+    const [pontos] = await db.query(
+      `SELECT p.os_id,p.latitude,p.longitude,p.dataHora FROM pontos p JOIN servicos s ON s.id=p.os_id WHERE ${cond.join(" AND ")} ORDER BY p.os_id,p.dataHora ASC`,
+      vals
+    );
+    const porOs = {};
+    for (const p of pontos) (porOs[p.os_id] = porOs[p.os_id] || []).push(p);
+    let km = 0;
+    for (const lista of Object.values(porOs)) {
+      for (let i = 1; i < lista.length; i++) km += distanciaKm(lista[i-1].latitude, lista[i-1].longitude, lista[i].latitude, lista[i].longitude);
+    }
+    res.json({ km: Number(km.toFixed(2)), viagens: Object.keys(porOs).length });
+  } catch (err) { handleDbError(res,err); }
+});
+
+function horasTrabalhadas(os) {
+  if (!os.inicio_data || !os.fim_data) return 0;
+  let ms = new Date(os.fim_data) - new Date(os.inicio_data);
+  if (os.almoco_inicio_data && os.almoco_fim_data) ms -= (new Date(os.almoco_fim_data) - new Date(os.almoco_inicio_data));
+  return Math.max(0, ms / 3600000);
+}
+app.get("/gestao/relatorios/:id/custo", autenticar, exigirPerfil("ADMIN","GESTOR"), async(req,res)=>{
+  if (!validarId(req.params.id)) return res.status(400).json({erro:"ID inválido."});
+  try {
+    const [[os]] = await db.query(
+      "SELECT s.*, t.custo_hora, v.custo_km FROM servicos s LEFT JOIN colaboradores t ON s.tecnico_id=t.id AND t.empresa_id=s.empresa_id LEFT JOIN veiculos v ON s.veiculo_id=v.id AND v.empresa_id=s.empresa_id WHERE s.id=? AND s.empresa_id=?",
+      [req.params.id, req.auth.empresaId]
+    );
+    if (!os) return res.status(404).json({erro:"OS não encontrada."});
+    const [materiais] = await db.query("SELECT quantidade,preco_unitario FROM servico_materiais WHERE servico_id=? AND status<>'CANCELADO'", [req.params.id]);
+    const [despesas] = await db.query("SELECT valor,tipo FROM despesas WHERE servico_id=?", [req.params.id]);
+    const [pontos] = await db.query("SELECT latitude,longitude FROM pontos WHERE os_id=? ORDER BY dataHora ASC", [req.params.id]);
+
+    let km = 0;
+    for (let i = 1; i < pontos.length; i++) km += distanciaKm(pontos[i-1].latitude, pontos[i-1].longitude, pontos[i].latitude, pontos[i].longitude);
+
+    const custoMaterial = materiais.reduce((s,m)=>s+Number(m.quantidade)*Number(m.preco_unitario), 0);
+    // Despesas de combustível ficam de fora daqui pra não contar duas vezes
+    // (o combustível já é estimado pelo km × custo/km do veículo).
+    const custoDespesas = despesas.filter(d=>d.tipo!=="COMBUSTIVEL").reduce((s,d)=>s+Number(d.valor), 0);
+    const horas = horasTrabalhadas(os);
+    const custoMaoDeObra = os.custo_hora != null ? horas * Number(os.custo_hora) : null;
+    const custoCombustivel = os.custo_km != null ? km * Number(os.custo_km) : null;
+    const total = custoMaterial + custoDespesas + (custoMaoDeObra || 0) + (custoCombustivel || 0);
+
+    const avisos = [];
+    if (os.custo_hora == null) avisos.push("Técnico sem valor/hora cadastrado — mão de obra não incluída no total.");
+    if (os.custo_km == null) avisos.push("Veículo sem custo/km cadastrado (ou nenhum veículo selecionado) — combustível não incluído no total.");
+
+    res.json({
+      material: Number(custoMaterial.toFixed(2)),
+      despesas: Number(custoDespesas.toFixed(2)),
+      maoDeObra: custoMaoDeObra != null ? Number(custoMaoDeObra.toFixed(2)) : null,
+      horasTrabalhadas: Number(horas.toFixed(2)),
+      combustivel: custoCombustivel != null ? Number(custoCombustivel.toFixed(2)) : null,
+      km: Number(km.toFixed(2)),
+      total: Number(total.toFixed(2)),
+      avisos,
+    });
+  } catch (err) { handleDbError(res,err); }
+});
+app.get("/gestao/custos-por-cliente", autenticar, exigirPerfil("ADMIN","GESTOR"), async(req,res)=>{
+  try {
+    const [oss] = await db.query(
+      `SELECT s.id,s.cliente_id,c.nome cliente_nome,s.inicio_data,s.fim_data,s.almoco_inicio_data,s.almoco_fim_data,t.custo_hora,v.custo_km
+       FROM servicos s
+       LEFT JOIN clientes c ON s.cliente_id=c.id AND c.empresa_id=s.empresa_id
+       LEFT JOIN colaboradores t ON s.tecnico_id=t.id AND t.empresa_id=s.empresa_id
+       LEFT JOIN veiculos v ON s.veiculo_id=v.id AND v.empresa_id=s.empresa_id
+       WHERE s.empresa_id=? AND s.status='FINALIZADA'`,
+      [req.auth.empresaId]
+    );
+    if (!oss.length) return res.json([]);
+    const ids = oss.map(o=>o.id);
+    const placeholders = ids.map(()=>"?").join(",");
+    const [materiaisTodos] = await db.query(`SELECT servico_id,quantidade,preco_unitario FROM servico_materiais WHERE servico_id IN (${placeholders}) AND status<>'CANCELADO'`, ids);
+    const [despesasTodas] = await db.query(`SELECT servico_id,valor,tipo FROM despesas WHERE servico_id IN (${placeholders})`, ids);
+    const [pontosTodos] = await db.query(`SELECT os_id,latitude,longitude FROM pontos WHERE os_id IN (${placeholders}) ORDER BY os_id,dataHora ASC`, ids);
+
+    const materiaisPorOS = {}, despesasPorOS = {}, pontosPorOS = {};
+    materiaisTodos.forEach(m=>(materiaisPorOS[m.servico_id]=materiaisPorOS[m.servico_id]||[]).push(m));
+    despesasTodas.forEach(d=>(despesasPorOS[d.servico_id]=despesasPorOS[d.servico_id]||[]).push(d));
+    pontosTodos.forEach(p=>(pontosPorOS[p.os_id]=pontosPorOS[p.os_id]||[]).push(p));
+
+    const porCliente = {};
+    for (const os of oss) {
+      const chave = os.cliente_id || "sem-cliente";
+      if (!porCliente[chave]) porCliente[chave] = { cliente_id: os.cliente_id, cliente_nome: os.cliente_nome || "—", os_count: 0, material: 0, despesas: 0, maoDeObra: 0, combustivel: 0, km: 0 };
+      const acc = porCliente[chave];
+      acc.os_count++;
+
+      const mats = materiaisPorOS[os.id] || [];
+      acc.material += mats.reduce((s,m)=>s+Number(m.quantidade)*Number(m.preco_unitario), 0);
+
+      const desp = despesasPorOS[os.id] || [];
+      acc.despesas += desp.filter(d=>d.tipo!=="COMBUSTIVEL").reduce((s,d)=>s+Number(d.valor), 0);
+
+      if (os.custo_hora != null) acc.maoDeObra += horasTrabalhadas(os) * Number(os.custo_hora);
+
+      const pontos = pontosPorOS[os.id] || [];
+      let km = 0;
+      for (let i = 1; i < pontos.length; i++) km += distanciaKm(pontos[i-1].latitude, pontos[i-1].longitude, pontos[i].latitude, pontos[i].longitude);
+      acc.km += km;
+      if (os.custo_km != null) acc.combustivel += km * Number(os.custo_km);
+    }
+
+    const resultado = Object.values(porCliente).map(c => ({
+      ...c,
+      material: Number(c.material.toFixed(2)),
+      despesas: Number(c.despesas.toFixed(2)),
+      maoDeObra: Number(c.maoDeObra.toFixed(2)),
+      combustivel: Number(c.combustivel.toFixed(2)),
+      km: Number(c.km.toFixed(2)),
+      total: Number((c.material + c.despesas + c.maoDeObra + c.combustivel).toFixed(2)),
+    })).sort((a,b)=>b.total-a.total);
+
+    res.json(resultado);
+  } catch (err) { handleDbError(res,err); }
+});
+
 app.post("/auth/push-token", autenticar, async (req, res) => {
   const token = String(req.body.token || "").trim();
   if (!token) return res.status(400).json({ erro: "Token é obrigatório." });
@@ -559,9 +699,16 @@ app.post("/gestao/materiais/importar",autenticar,exigirPerfil("ADMIN","GESTOR"),
 // Igual materiais: nunca excluídos de verdade (têm OS/despesas/pontos de
 // GPS vinculados no histórico) — "excluir" aqui desativa, pra sumir dos
 // seletores de nova OS sem perder nada do que já foi registrado.
-app.put("/gestao/colaboradores/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{const{id}=req.params;if(!validarId(id))return res.status(400).json({erro:"ID inválido."});const{nome,ativo}=req.body;if(!String(nome||"").trim())return res.status(400).json({erro:"O campo 'nome' é obrigatório."});try{const[r]=await db.query("UPDATE colaboradores SET nome=?,ativo=? WHERE id=? AND empresa_id=?",[String(nome).trim(),ativo===false||ativo===0?0:1,id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Técnico não encontrado."});res.json({message:"Técnico atualizado com sucesso."})}catch(err){handleDbError(res,err)}});
+app.put("/gestao/colaboradores/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{const{id}=req.params;if(!validarId(id))return res.status(400).json({erro:"ID inválido."});const{nome,ativo,custo_hora}=req.body;if(!String(nome||"").trim())return res.status(400).json({erro:"O campo 'nome' é obrigatório."});const ch=custo_hora===""||custo_hora==null?null:Number(custo_hora);if(ch!=null&&(!Number.isFinite(ch)||ch<0))return res.status(400).json({erro:"Valor/hora inválido."});try{const[r]=await db.query("UPDATE colaboradores SET nome=?,ativo=?,custo_hora=? WHERE id=? AND empresa_id=?",[String(nome).trim(),ativo===false||ativo===0?0:1,ch,id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Técnico não encontrado."});res.json({message:"Técnico atualizado com sucesso."})}catch(err){handleDbError(res,err)}});
 app.delete("/gestao/colaboradores/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[r]=await db.query("UPDATE colaboradores SET ativo=0 WHERE id=? AND empresa_id=?",[req.params.id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Técnico não encontrado."});res.json({message:"Técnico desativado com sucesso."})}catch(err){handleDbError(res,err)}});
 app.patch("/gestao/colaboradores/:id/reativar",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[r]=await db.query("UPDATE colaboradores SET ativo=1 WHERE id=? AND empresa_id=?",[req.params.id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Técnico não encontrado."});res.json({message:"Técnico reativado com sucesso."})}catch(err){handleDbError(res,err)}});
+
+// Veículos --------------------------------------------------------------
+app.get("/veiculos", authOpcional, async(req,res)=>{try{const q=req.query.todos==="1"?"":" AND ativo=1";const[rows]=await db.query(`SELECT * FROM veiculos WHERE empresa_id=?${q} ORDER BY nome`,[req.auth.empresaId]);res.json(rows)}catch(err){handleDbError(res,err)}});
+app.post("/gestao/veiculos",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{const{nome,placa,custo_km}=req.body;if(!String(nome||"").trim())return res.status(400).json({erro:"O campo 'nome' é obrigatório."});const ck=custo_km===""||custo_km==null?null:Number(custo_km);if(ck!=null&&(!Number.isFinite(ck)||ck<0))return res.status(400).json({erro:"Custo/km inválido."});try{const[r]=await db.query("INSERT INTO veiculos (empresa_id,nome,placa,custo_km) VALUES (?,?,?,?)",[req.auth.empresaId,String(nome).trim(),placa?String(placa).trim().toUpperCase():null,ck]);res.status(201).json({id:r.insertId,message:"Veículo cadastrado com sucesso."})}catch(err){handleDbError(res,err)}});
+app.put("/gestao/veiculos/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{const{id}=req.params;if(!validarId(id))return res.status(400).json({erro:"ID inválido."});const{nome,placa,ativo,custo_km}=req.body;if(!String(nome||"").trim())return res.status(400).json({erro:"O campo 'nome' é obrigatório."});const ck=custo_km===""||custo_km==null?null:Number(custo_km);if(ck!=null&&(!Number.isFinite(ck)||ck<0))return res.status(400).json({erro:"Custo/km inválido."});try{const[r]=await db.query("UPDATE veiculos SET nome=?,placa=?,ativo=?,custo_km=? WHERE id=? AND empresa_id=?",[String(nome).trim(),placa?String(placa).trim().toUpperCase():null,ativo===false||ativo===0?0:1,ck,id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Veículo não encontrado."});res.json({message:"Veículo atualizado com sucesso."})}catch(err){handleDbError(res,err)}});
+app.delete("/gestao/veiculos/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[r]=await db.query("UPDATE veiculos SET ativo=0 WHERE id=? AND empresa_id=?",[req.params.id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Veículo não encontrado."});res.json({message:"Veículo desativado com sucesso."})}catch(err){handleDbError(res,err)}});
+app.patch("/gestao/veiculos/:id/reativar",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[r]=await db.query("UPDATE veiculos SET ativo=1 WHERE id=? AND empresa_id=?",[req.params.id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Veículo não encontrado."});res.json({message:"Veículo reativado com sucesso."})}catch(err){handleDbError(res,err)}});
 
 app.post("/gestao/:tipo",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{const{tipo}=req.params;if(!tipoValido(tipo))return res.status(400).json({erro:`Tipo inválido: ${tipo}`});const{nome,rua,bairro,cidade,telefone}=req.body;if(!String(nome||"").trim())return res.status(400).json({erro:"O campo 'nome' é obrigatório."});try{const[r]=tipo==="clientes"?await db.query("INSERT INTO clientes (empresa_id,nome,rua,bairro,cidade,telefone) VALUES (?,?,?,?,?,?)",[req.auth.empresaId,String(nome).trim(),rua||null,bairro||null,cidade||null,telefone||null]):await db.query(`INSERT INTO ${tipo} (empresa_id,nome) VALUES (?,?)`,[req.auth.empresaId,String(nome).trim()]);res.status(201).json({id:r.insertId,message:"Cadastro criado com sucesso."})}catch(err){handleDbError(res,err)}});
 app.put("/gestao/:tipo/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{const{tipo,id}=req.params;if(!tipoValido(tipo)||!validarId(id))return res.status(400).json({erro:"Tipo ou ID inválido."});const{nome,rua,bairro,cidade,telefone}=req.body;if(!String(nome||"").trim())return res.status(400).json({erro:"O campo 'nome' é obrigatório."});try{const[r]=tipo==="clientes"?await db.query("UPDATE clientes SET nome=?,rua=?,bairro=?,cidade=?,telefone=? WHERE id=? AND empresa_id=?",[String(nome).trim(),rua||null,bairro||null,cidade||null,telefone||null,id,req.auth.empresaId]):await db.query(`UPDATE ${tipo} SET nome=? WHERE id=? AND empresa_id=?`,[String(nome).trim(),id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Registro não encontrado."});res.json({message:"Cadastro atualizado com sucesso."})}catch(err){handleDbError(res,err)}});
@@ -569,18 +716,19 @@ app.delete("/gestao/:tipo/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(r
 
 // Dashboard ------------------------------------------------------------------
 app.get("/gestao/resumo",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{try{const e=req.auth.empresaId;const[[totalOS]] = await db.query("SELECT COUNT(*) total FROM servicos WHERE empresa_id=?",[e]);const[[hoje]]=await db.query("SELECT COUNT(*) total FROM servicos WHERE empresa_id=? AND DATE(fim_data)=CURDATE()",[e]);const[[tecnicos]]=await db.query("SELECT COUNT(*) total FROM colaboradores WHERE empresa_id=?",[e]);const[[clientes]]=await db.query("SELECT COUNT(*) total FROM clientes WHERE empresa_id=?",[e]);const[[gestores]]=await db.query("SELECT COUNT(*) total FROM gestores WHERE empresa_id=?",[e]);res.json({ordens:Number(totalOS.total),ordensHoje:Number(hoje.total),tecnicos:Number(tecnicos.total),clientes:Number(clientes.total),gestores:Number(gestores.total)})}catch(err){handleDbError(res,err)}});
-app.get("/gestao/relatorios",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{const limite=Math.min(Math.max(Number(req.query.limite)||100,1),500);try{const[rows]=await db.query(`SELECT s.*,t.nome tecnico_nome,c.nome cliente_nome,g.nome gestor_nome FROM servicos s LEFT JOIN colaboradores t ON s.tecnico_id=t.id AND t.empresa_id=s.empresa_id LEFT JOIN clientes c ON s.cliente_id=c.id AND c.empresa_id=s.empresa_id LEFT JOIN gestores g ON s.gestor_id=g.id AND g.empresa_id=s.empresa_id WHERE s.empresa_id=? ORDER BY s.id DESC LIMIT ?`,[req.auth.empresaId,limite]);res.json(rows)}catch(err){handleDbError(res,err)}});
+app.get("/gestao/relatorios",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{const limite=Math.min(Math.max(Number(req.query.limite)||100,1),500);try{const[rows]=await db.query(`SELECT s.*,t.nome tecnico_nome,c.nome cliente_nome,g.nome gestor_nome,v.nome veiculo_nome,v.placa veiculo_placa FROM servicos s LEFT JOIN colaboradores t ON s.tecnico_id=t.id AND t.empresa_id=s.empresa_id LEFT JOIN clientes c ON s.cliente_id=c.id AND c.empresa_id=s.empresa_id LEFT JOIN gestores g ON s.gestor_id=g.id AND g.empresa_id=s.empresa_id LEFT JOIN veiculos v ON s.veiculo_id=v.id AND v.empresa_id=s.empresa_id WHERE s.empresa_id=? ORDER BY s.id DESC LIMIT ?`,[req.auth.empresaId,limite]);res.json(rows)}catch(err){handleDbError(res,err)}});
 
 app.get("/gestao/relatorios/:id/pdf",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{
   const id = req.params.id;
   if (!validarId(id)) return res.status(400).json({erro:"ID inválido."});
   try {
     const [[os]] = await db.query(
-      `SELECT s.*, t.nome tecnico_nome, c.nome cliente_nome, c.rua, c.bairro, c.cidade, g.nome gestor_nome
+      `SELECT s.*, t.nome tecnico_nome, t.custo_hora, c.nome cliente_nome, c.rua, c.bairro, c.cidade, g.nome gestor_nome, v.nome veiculo_nome, v.placa veiculo_placa, v.custo_km
        FROM servicos s
        LEFT JOIN colaboradores t ON s.tecnico_id=t.id AND t.empresa_id=s.empresa_id
        LEFT JOIN clientes c ON s.cliente_id=c.id AND c.empresa_id=s.empresa_id
        LEFT JOIN gestores g ON s.gestor_id=g.id AND g.empresa_id=s.empresa_id
+       LEFT JOIN veiculos v ON s.veiculo_id=v.id AND v.empresa_id=s.empresa_id
        WHERE s.id=? AND s.empresa_id=?`, [id, req.auth.empresaId]);
     if (!os) return res.status(404).json({ erro: "OS não encontrada." });
 
@@ -588,6 +736,9 @@ app.get("/gestao/relatorios/:id/pdf",autenticar,exigirPerfil("ADMIN","GESTOR"),a
       "SELECT sm.quantidade, m.nome material_nome, m.unidade FROM servico_materiais sm JOIN materiais m ON m.id=sm.material_id WHERE sm.servico_id=? AND sm.status<>'CANCELADO'", [id]);
     const [despesas] = await db.query(
       "SELECT tipo, valor, descricao, cobrar_do_cliente FROM despesas WHERE servico_id=?", [id]);
+    const [pontosOS] = await db.query("SELECT latitude,longitude FROM pontos WHERE os_id=? ORDER BY dataHora ASC", [id]);
+    let kmPercorrido = 0;
+    for (let i = 1; i < pontosOS.length; i++) kmPercorrido += distanciaKm(pontosOS[i-1].latitude, pontosOS[i-1].longitude, pontosOS[i].latitude, pontosOS[i].longitude);
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="OS-${os.id}.pdf"`);
@@ -608,6 +759,9 @@ app.get("/gestao/relatorios/:id/pdf",autenticar,exigirPerfil("ADMIN","GESTOR"),a
     }
     doc.fontSize(11).fillColor("#152238").text(`Técnico: ${os.tecnico_nome || "—"}`);
     doc.text(`Gestor: ${os.gestor_nome || "—"}`);
+    if (os.veiculo_nome) {
+      doc.text(`Veículo: ${os.veiculo_nome}${os.veiculo_placa ? ` (${os.veiculo_placa})` : ""}${pontosOS.length > 1 ? ` — ${kmPercorrido.toFixed(2)} km percorridos` : ""}`);
+    }
     doc.moveDown(0.4);
 
     doc.fontSize(9).fillColor("#687386").text(
@@ -639,6 +793,25 @@ app.get("/gestao/relatorios/:id/pdf",autenticar,exigirPerfil("ADMIN","GESTOR"),a
       doc.moveDown(0.7);
     }
 
+    {
+      const custoMaterial = materiais.reduce((s,m)=>s+Number(m.quantidade)*Number(m.preco_unitario), 0);
+      const custoDespesas = despesas.filter(d=>d.tipo!=="COMBUSTIVEL").reduce((s,d)=>s+Number(d.valor), 0);
+      const horas = horasTrabalhadas(os);
+      const custoMaoDeObra = os.custo_hora != null ? horas * Number(os.custo_hora) : null;
+      const custoCombustivel = os.custo_km != null ? kmPercorrido * Number(os.custo_km) : null;
+      const totalCusto = custoMaterial + custoDespesas + (custoMaoDeObra || 0) + (custoCombustivel || 0);
+
+      doc.fontSize(13).fillColor("#152238").text("Custo estimado desta OS");
+      doc.moveTo(doc.x, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor("#E5E9F0").stroke();
+      doc.moveDown(0.3);
+      doc.fontSize(10).fillColor("#16233B").text(`Material: R$ ${custoMaterial.toFixed(2)}`);
+      doc.text(`Outras despesas (sem combustível): R$ ${custoDespesas.toFixed(2)}`);
+      doc.text(`Mão de obra${horas ? ` (${horas.toFixed(2)}h)` : ""}: ${custoMaoDeObra != null ? `R$ ${custoMaoDeObra.toFixed(2)}` : "não calculado (técnico sem valor/hora)"}`);
+      doc.text(`Combustível${pontosOS.length > 1 ? ` (${kmPercorrido.toFixed(2)} km)` : ""}: ${custoCombustivel != null ? `R$ ${custoCombustivel.toFixed(2)}` : "não calculado (veículo sem custo/km)"}`);
+      doc.fontSize(11).fillColor("#152238").text(`Total estimado: R$ ${totalCusto.toFixed(2)}`, { underline: true });
+      doc.moveDown(0.7);
+    }
+
     const fotos = normalizarFotos(os.foto_conclusao);
     if (fotos.length) {
       if (doc.y + 150 > doc.page.height - doc.page.margins.bottom) doc.addPage();
@@ -647,7 +820,7 @@ app.get("/gestao/relatorios/:id/pdf",autenticar,exigirPerfil("ADMIN","GESTOR"),a
       const larguraImg = 160, alturaImg = 120, gap = 14;
       let x = doc.page.margins.left, y = doc.y;
       for (const caminho of fotos) {
-        const buffer = bufferDaImagem(caminho);
+        const buffer = await bufferDaImagem(caminho);
         if (!buffer) continue;
         if (x + larguraImg > doc.page.width - doc.page.margins.right) { x = doc.page.margins.left; y += alturaImg + gap; }
         if (y + alturaImg > doc.page.height - doc.page.margins.bottom) { doc.addPage(); x = doc.page.margins.left; y = doc.page.margins.top; }
@@ -660,7 +833,7 @@ app.get("/gestao/relatorios/:id/pdf",autenticar,exigirPerfil("ADMIN","GESTOR"),a
     if (doc.y + 170 > doc.page.height - doc.page.margins.bottom) doc.addPage();
     doc.fontSize(13).fillColor("#152238").text("Assinatura de quem recebeu o serviço");
     doc.moveDown(0.5);
-    const bufferAssinatura = bufferDaImagem(os.cliente_assinatura);
+    const bufferAssinatura = await bufferDaImagem(os.cliente_assinatura);
     if (bufferAssinatura) {
       try { doc.image(bufferAssinatura, { fit: [260, 140] }); } catch (_) {}
     }
@@ -725,8 +898,8 @@ app.get("/tecnico/dashboard",autenticar,exigirPerfil("TECNICO"),async(req,res)=>
   }catch(err){handleDbError(res,err,"Não foi possível carregar o dashboard do técnico.")}
 });
 
-app.get("/servico",authOpcional,async(req,res)=>{const{tecnico_id,status}=req.query;const c=["s.empresa_id=?"],v=[req.auth.empresaId];if(req.auth.perfil==="TECNICO"){const cid=await colaboradorDoUsuario(req);if(!cid)return res.status(403).json({erro:"Usuário técnico não está vinculado a um colaborador."});c.push("s.tecnico_id=?");v.push(cid)}else if(tecnico_id){c.push("s.tecnico_id=?");v.push(tecnico_id)}if(status){c.push("s.status=?");v.push(String(status).toUpperCase())}try{const[rows]=await db.query(`SELECT s.*,c.nome cliente_nome,g.nome gestor_nome FROM servicos s LEFT JOIN clientes c ON s.cliente_id=c.id AND c.empresa_id=s.empresa_id LEFT JOIN gestores g ON s.gestor_id=g.id AND g.empresa_id=s.empresa_id WHERE ${c.join(" AND ")} ORDER BY s.criada_data DESC LIMIT 100`,v);res.json(rows)}catch(err){handleDbError(res,err)}});
-app.post("/servico/criar",autenticar,async(req,res)=>{let{tecnico_id,cliente_id,gestor_id}=req.body;if(req.auth.perfil==="TECNICO"){const proprioTecnico=await colaboradorDoUsuario(req);if(!proprioTecnico)return res.status(403).json({erro:"Usuário técnico não está vinculado a um colaborador."});tecnico_id=proprioTecnico;}if(!validarId(tecnico_id)||!validarId(cliente_id)||!validarId(gestor_id))return res.status(400).json({erro:"Técnico, cliente e gestor válidos são obrigatórios."});const conn=await db.getConnection();try{await conn.beginTransaction();const[[ok]]=await conn.query("SELECT 1 FROM colaboradores t JOIN clientes c ON c.empresa_id=t.empresa_id JOIN gestores g ON g.empresa_id=t.empresa_id WHERE t.id=? AND c.id=? AND g.id=? AND t.empresa_id=? LIMIT 1",[tecnico_id,cliente_id,gestor_id,req.auth.empresaId]);if(!ok){await conn.rollback();return res.status(400).json({erro:"Técnico, cliente e gestor devem pertencer à mesma empresa."})}const[r]=await conn.query("INSERT INTO servicos (empresa_id,tecnico_id,cliente_id,gestor_id,status,criada_data) VALUES (?,?,?,?, 'ATRIBUIDA',NOW())",[req.auth.empresaId,tecnico_id,cliente_id,gestor_id]);await registrarStatus(r.insertId,"ATRIBUIDA",conn);await conn.commit();res.status(201).json({id:r.insertId,status:"ATRIBUIDA",message:"Ordem de serviço criada."});const[[cli]]=await db.query("SELECT nome FROM clientes WHERE id=? AND empresa_id=?",[cliente_id,req.auth.empresaId]).catch(()=>[[null]]);enviarPushParaTecnico(req.auth.empresaId,tecnico_id,"Nova OS atribuída",`Você recebeu uma nova ordem de serviço${cli?.nome?` para ${cli.nome}`:""}.`,{tipo:"nova_os",os_id:r.insertId});}catch(err){await conn.rollback();handleDbError(res,err,"Não foi possível criar a ordem de serviço.")}finally{conn.release()}});
+app.get("/servico",authOpcional,async(req,res)=>{const{tecnico_id,status}=req.query;const c=["s.empresa_id=?"],v=[req.auth.empresaId];if(req.auth.perfil==="TECNICO"){const cid=await colaboradorDoUsuario(req);if(!cid)return res.status(403).json({erro:"Usuário técnico não está vinculado a um colaborador."});c.push("s.tecnico_id=?");v.push(cid)}else if(tecnico_id){c.push("s.tecnico_id=?");v.push(tecnico_id)}if(status){c.push("s.status=?");v.push(String(status).toUpperCase())}try{const[rows]=await db.query(`SELECT s.*,c.nome cliente_nome,g.nome gestor_nome,ve.nome veiculo_nome,ve.placa veiculo_placa FROM servicos s LEFT JOIN clientes c ON s.cliente_id=c.id AND c.empresa_id=s.empresa_id LEFT JOIN gestores g ON s.gestor_id=g.id AND g.empresa_id=s.empresa_id LEFT JOIN veiculos ve ON s.veiculo_id=ve.id AND ve.empresa_id=s.empresa_id WHERE ${c.join(" AND ")} ORDER BY s.criada_data DESC LIMIT 100`,v);res.json(rows)}catch(err){handleDbError(res,err)}});
+app.post("/servico/criar",autenticar,async(req,res)=>{let{tecnico_id,cliente_id,gestor_id,veiculo_id}=req.body;if(req.auth.perfil==="TECNICO"){const proprioTecnico=await colaboradorDoUsuario(req);if(!proprioTecnico)return res.status(403).json({erro:"Usuário técnico não está vinculado a um colaborador."});tecnico_id=proprioTecnico;}if(!validarId(tecnico_id)||!validarId(cliente_id)||!validarId(gestor_id))return res.status(400).json({erro:"Técnico, cliente e gestor válidos são obrigatórios."});veiculo_id=validarId(veiculo_id)?Number(veiculo_id):null;const conn=await db.getConnection();try{await conn.beginTransaction();const[[ok]]=await conn.query("SELECT 1 FROM colaboradores t JOIN clientes c ON c.empresa_id=t.empresa_id JOIN gestores g ON g.empresa_id=t.empresa_id WHERE t.id=? AND c.id=? AND g.id=? AND t.empresa_id=? LIMIT 1",[tecnico_id,cliente_id,gestor_id,req.auth.empresaId]);if(!ok){await conn.rollback();return res.status(400).json({erro:"Técnico, cliente e gestor devem pertencer à mesma empresa."})}if(veiculo_id){const[[veiculoOk]]=await conn.query("SELECT 1 FROM veiculos WHERE id=? AND empresa_id=? AND ativo=1",[veiculo_id,req.auth.empresaId]);if(!veiculoOk){await conn.rollback();return res.status(400).json({erro:"Veículo inválido."})}}const[r]=await conn.query("INSERT INTO servicos (empresa_id,tecnico_id,cliente_id,gestor_id,veiculo_id,status,criada_data) VALUES (?,?,?,?,?, 'ATRIBUIDA',NOW())",[req.auth.empresaId,tecnico_id,cliente_id,gestor_id,veiculo_id]);await registrarStatus(r.insertId,"ATRIBUIDA",conn);await conn.commit();res.status(201).json({id:r.insertId,status:"ATRIBUIDA",message:"Ordem de serviço criada."});const[[cli]]=await db.query("SELECT nome FROM clientes WHERE id=? AND empresa_id=?",[cliente_id,req.auth.empresaId]).catch(()=>[[null]]);enviarPushParaTecnico(req.auth.empresaId,tecnico_id,"Nova OS atribuída",`Você recebeu uma nova ordem de serviço${cli?.nome?` para ${cli.nome}`:""}.`,{tipo:"nova_os",os_id:r.insertId});}catch(err){await conn.rollback();handleDbError(res,err,"Não foi possível criar a ordem de serviço.")}finally{conn.release()}});
 app.get("/servico/:id",autenticar,async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[[os]]=await db.query(`SELECT s.*,t.nome tecnico_nome,c.nome cliente_nome,g.nome gestor_nome FROM servicos s LEFT JOIN colaboradores t ON s.tecnico_id=t.id AND t.empresa_id=s.empresa_id LEFT JOIN clientes c ON s.cliente_id=c.id AND c.empresa_id=s.empresa_id LEFT JOIN gestores g ON s.gestor_id=g.id AND g.empresa_id=s.empresa_id WHERE s.id=? AND s.empresa_id=?`,[req.params.id,req.auth.empresaId]);if(!os)return res.status(404).json({erro:"OS não encontrada."});if(!(await tecnicoPodeAcessarOS(req,os)))return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});const[historico]=await db.query("SELECT status,dataHora FROM servico_status_historico WHERE servico_id=? AND empresa_id=? ORDER BY id",[req.params.id,req.auth.empresaId]);res.json({...os,historico})}catch(err){handleDbError(res,err)}});
 app.post("/servico/:id/status",autenticar,async(req,res)=>{const id=req.params.id,proximo=String(req.body.status||"").trim().toUpperCase();if(!validarId(id)||!STATUS_VALIDOS.includes(proximo)||["FINALIZADA","CANCELADA"].includes(proximo))return res.status(400).json({erro:"OS ou status inválido. Use finalização/cancelamento para encerrar."});const conn=await db.getConnection();try{await conn.beginTransaction();const[[os]]=await conn.query("SELECT id,status,tecnico_id FROM servicos WHERE id=? AND empresa_id=? FOR UPDATE",[id,req.auth.empresaId]);if(!os){await conn.rollback();return res.status(404).json({erro:"OS não encontrada."});}if(!(await tecnicoPodeAcessarOS(req,os))){await conn.rollback();return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});} if(TRANSICOES[os.status]!==proximo){await conn.rollback();return res.status(409).json({erro:`Transição inválida: ${os.status} → ${proximo}.`});}const coluna={ACEITA:"aceita_data",EM_DESLOCAMENTO:"deslocamento_data",NO_LOCAL:"chegada_data",EM_ATENDIMENTO:"inicio_data"}[proximo];await conn.query(`UPDATE servicos SET status=?,${coluna}=NOW() WHERE id=? AND empresa_id=?`,[proximo,id,req.auth.empresaId]);await registrarStatus(id,proximo,conn);await conn.commit();res.json({id:Number(id),status:proximo,message:"Status atualizado com sucesso."})}catch(err){await conn.rollback();handleDbError(res,err,"Não foi possível atualizar o status da OS.")}finally{conn.release()}});
 app.post("/servico/finalizar",autenticar,async(req,res)=>{
@@ -758,7 +931,7 @@ app.post("/servico/finalizar",autenticar,async(req,res)=>{
   try{
     fotosSalvas = await Promise.all(fotosRecebidas.map(async(foto,i)=>{
       if(typeof foto==="string"&&foto.startsWith("/uploads/"))return foto;
-      const url = await salvarFotoBase64Async(foto,i+1);
+      const url = await salvarFotoBase64(foto,i+1);
       if(!url) throw new Error(`Foto ${i+1} inválida ou maior que 5 MB.`);
       return url;
     }));
@@ -844,7 +1017,7 @@ app.get("/servico/:id/materiais",autenticar,async(req,res)=>{if(!validarId(req.p
 app.delete("/servico/materiais/:id",autenticar,exigirPerfil("ADMIN","GESTOR"),async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[r]=await db.query("DELETE FROM servico_materiais WHERE id=? AND empresa_id=?",[req.params.id,req.auth.empresaId]);if(!r.affectedRows)return res.status(404).json({erro:"Solicitação não encontrada."});res.json({message:"Solicitação removida."})}catch(err){handleDbError(res,err)}});
 
 const TIPOS_DESPESA_VALIDOS=["PEDAGIO","HOSPEDAGEM","MATERIAL","ALIMENTACAO","COMBUSTIVEL","ESTACIONAMENTO","OUTRO"];
-app.post("/servico/:id/despesas",autenticar,async(req,res)=>{const servicoId=req.params.id;let {tecnico_id,tipo,valor,descricao,numero_nota,foto_recibo,cobrar_do_cliente}=req.body;if(req.auth.perfil==="TECNICO"){tecnico_id=await colaboradorDoUsuario(req);};const tn=String(tipo||"").trim().toUpperCase();if(!validarId(servicoId)||!validarId(tecnico_id))return res.status(400).json({erro:"OS e técnico válidos são obrigatórios."});if(!TIPOS_DESPESA_VALIDOS.includes(tn))return res.status(400).json({erro:`Tipo de despesa inválido. Use um de: ${TIPOS_DESPESA_VALIDOS.join(", ")}.`});const vn=Number(valor);if(!Number.isFinite(vn)||vn<=0)return res.status(400).json({erro:"Valor inválido."});try{const[[s]]=await db.query("SELECT id,tecnico_id FROM servicos WHERE id=? AND empresa_id=?",[servicoId,req.auth.empresaId]);if(s && !(await tecnicoPodeAcessarOS(req,s)))return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});const[[t]]=await db.query("SELECT id FROM colaboradores WHERE id=? AND empresa_id=?",[tecnico_id,req.auth.empresaId]);if(!s||!t)return res.status(404).json({erro:"OS ou técnico não encontrado."});let foto=null;if(foto_recibo){foto=typeof foto_recibo==="string"&&foto_recibo.startsWith("/uploads/")?foto_recibo:salvarFotoBase64(foto_recibo,"recibo");if(!foto)return res.status(400).json({erro:"Foto do recibo inválida ou maior que 5 MB."})}const[r]=await db.query("INSERT INTO despesas (empresa_id,servico_id,tecnico_id,tipo,valor,descricao,numero_nota,foto_recibo,cobrar_do_cliente) VALUES (?,?,?,?,?,?,?,?,?)",[req.auth.empresaId,servicoId,tecnico_id,tn,vn,descricao?String(descricao).trim():null,numero_nota?String(numero_nota).trim():null,foto,cobrar_do_cliente===false||cobrar_do_cliente===0?0:1]);res.status(201).json({id:r.insertId,message:"Despesa registrada com sucesso."})}catch(err){handleDbError(res,err,"Não foi possível registrar a despesa.")}});
+app.post("/servico/:id/despesas",autenticar,async(req,res)=>{const servicoId=req.params.id;let {tecnico_id,tipo,valor,descricao,numero_nota,foto_recibo,cobrar_do_cliente}=req.body;if(req.auth.perfil==="TECNICO"){tecnico_id=await colaboradorDoUsuario(req);};const tn=String(tipo||"").trim().toUpperCase();if(!validarId(servicoId)||!validarId(tecnico_id))return res.status(400).json({erro:"OS e técnico válidos são obrigatórios."});if(!TIPOS_DESPESA_VALIDOS.includes(tn))return res.status(400).json({erro:`Tipo de despesa inválido. Use um de: ${TIPOS_DESPESA_VALIDOS.join(", ")}.`});const vn=Number(valor);if(!Number.isFinite(vn)||vn<=0)return res.status(400).json({erro:"Valor inválido."});try{const[[s]]=await db.query("SELECT id,tecnico_id FROM servicos WHERE id=? AND empresa_id=?",[servicoId,req.auth.empresaId]);if(s && !(await tecnicoPodeAcessarOS(req,s)))return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});const[[t]]=await db.query("SELECT id FROM colaboradores WHERE id=? AND empresa_id=?",[tecnico_id,req.auth.empresaId]);if(!s||!t)return res.status(404).json({erro:"OS ou técnico não encontrado."});let foto=null;if(foto_recibo){foto=typeof foto_recibo==="string"&&foto_recibo.startsWith("/uploads/")?foto_recibo:await salvarFotoBase64(foto_recibo,"recibo");if(!foto)return res.status(400).json({erro:"Foto do recibo inválida ou maior que 5 MB."})}const[r]=await db.query("INSERT INTO despesas (empresa_id,servico_id,tecnico_id,tipo,valor,descricao,numero_nota,foto_recibo,cobrar_do_cliente) VALUES (?,?,?,?,?,?,?,?,?)",[req.auth.empresaId,servicoId,tecnico_id,tn,vn,descricao?String(descricao).trim():null,numero_nota?String(numero_nota).trim():null,foto,cobrar_do_cliente===false||cobrar_do_cliente===0?0:1]);res.status(201).json({id:r.insertId,message:"Despesa registrada com sucesso."})}catch(err){handleDbError(res,err,"Não foi possível registrar a despesa.")}});
 app.get("/servico/:id/despesas",autenticar,async(req,res)=>{if(!validarId(req.params.id))return res.status(400).json({erro:"ID inválido."});try{const[[os]]=await db.query("SELECT id,tecnico_id FROM servicos WHERE id=? AND empresa_id=?",[req.params.id,req.auth.empresaId]);if(!os)return res.status(404).json({erro:"OS não encontrada."});if(!(await tecnicoPodeAcessarOS(req,os)))return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});const[rows]=await db.query("SELECT * FROM despesas WHERE servico_id=? AND empresa_id=? ORDER BY criado_em DESC",[req.params.id,req.auth.empresaId]);res.json(rows)}catch(err){handleDbError(res,err)}});
 
 // Despesa avulsa: não depende de estar dentro de uma OS aberta — o técnico
@@ -861,7 +1034,7 @@ app.post("/despesas",autenticar,async(req,res)=>{
     const[[t]]=await db.query("SELECT id,nome FROM colaboradores WHERE id=? AND empresa_id=?",[tecnico_id,req.auth.empresaId]);
     const[[c]]=await db.query("SELECT id,nome FROM clientes WHERE id=? AND empresa_id=?",[cliente_id,req.auth.empresaId]);
     if(!t||!c)return res.status(404).json({erro:"Técnico ou cliente não encontrado."});
-    let foto=null;if(foto_recibo){foto=typeof foto_recibo==="string"&&foto_recibo.startsWith("/uploads/")?foto_recibo:salvarFotoBase64(foto_recibo,"recibo");if(!foto)return res.status(400).json({erro:"Foto do recibo inválida ou maior que 5 MB."})}
+    let foto=null;if(foto_recibo){foto=typeof foto_recibo==="string"&&foto_recibo.startsWith("/uploads/")?foto_recibo:await salvarFotoBase64(foto_recibo,"recibo");if(!foto)return res.status(400).json({erro:"Foto do recibo inválida ou maior que 5 MB."})}
     const[r]=await db.query("INSERT INTO despesas (empresa_id,servico_id,cliente_id,tecnico_id,tipo,valor,descricao,numero_nota,foto_recibo,cobrar_do_cliente) VALUES (?,NULL,?,?,?,?,?,?,?,?)",[req.auth.empresaId,cliente_id,tecnico_id,tn,vn,descricao?String(descricao).trim():null,numero_nota?String(numero_nota).trim():null,foto,cobrar_do_cliente===false||cobrar_do_cliente===0?0:1]);
     res.status(201).json({id:r.insertId,message:"Despesa registrada com sucesso."});
     enviarPushParaGestores(req.auth.empresaId,"Nova despesa lançada",`${t.nome} lançou uma despesa de R$ ${vn.toFixed(2)} (${c.nome}).`,{tipo:"despesa"});
