@@ -966,6 +966,38 @@ app.post("/servico/finalizar",autenticar,async(req,res)=>{
 app.post("/servico/:id/almoco/iniciar",autenticar,async(req,res)=>{const id=req.params.id;if(!validarId(id))return res.status(400).json({erro:"ID inválido."});const conn=await db.getConnection();try{await conn.beginTransaction();const[[os]]=await conn.query("SELECT id,status FROM servicos WHERE id=? AND empresa_id=? FOR UPDATE",[id,req.auth.empresaId]);if(!os){await conn.rollback();return res.status(404).json({erro:"OS não encontrada."})}if(!(await tecnicoPodeAcessarOS(req,os))){await conn.rollback();return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});}if(os.status!=="EM_ATENDIMENTO"){await conn.rollback();return res.status(409).json({erro:`Só é possível iniciar o almoço com a OS em atendimento. Status atual: ${os.status}.`})}await conn.query("UPDATE servicos SET status='EM_ALMOCO',almoco_inicio_data=NOW() WHERE id=? AND empresa_id=?",[id,req.auth.empresaId]);await registrarStatus(id,"EM_ALMOCO",conn);await conn.commit();res.json({id:Number(id),status:"EM_ALMOCO",message:"Horário de almoço registrado."})}catch(err){await conn.rollback();handleDbError(res,err,"Não foi possível iniciar o almoço.")}finally{conn.release()}});
 app.post("/servico/:id/almoco/finalizar",autenticar,async(req,res)=>{const id=req.params.id;if(!validarId(id))return res.status(400).json({erro:"ID inválido."});const conn=await db.getConnection();try{await conn.beginTransaction();const[[os]]=await conn.query("SELECT id,status FROM servicos WHERE id=? AND empresa_id=? FOR UPDATE",[id,req.auth.empresaId]);if(!os){await conn.rollback();return res.status(404).json({erro:"OS não encontrada."})}if(!(await tecnicoPodeAcessarOS(req,os))){await conn.rollback();return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});}if(os.status!=="EM_ALMOCO"){await conn.rollback();return res.status(409).json({erro:`A OS não está em horário de almoço. Status atual: ${os.status}.`})}await conn.query("UPDATE servicos SET status='EM_ATENDIMENTO',almoco_fim_data=NOW() WHERE id=? AND empresa_id=?",[id,req.auth.empresaId]);await registrarStatus(id,"EM_ATENDIMENTO",conn);await conn.commit();res.json({id:Number(id),status:"EM_ATENDIMENTO",message:"Retorno do almoço registrado."})}catch(err){await conn.rollback();handleDbError(res,err,"Não foi possível finalizar o almoço.")}finally{conn.release()}});
 
+// Digitar o horário de almoço direto (em vez de apertar "iniciar"/"voltar"
+// no momento exato) — não muda o status da OS, só grava os horários.
+app.patch("/servico/:id/almoco",autenticar,async(req,res)=>{
+  const id=req.params.id;
+  if(!validarId(id))return res.status(400).json({erro:"ID inválido."});
+  const validarHora=h=>typeof h==="string"&&/^([01]\d|2[0-3]):([0-5]\d)$/.test(h.trim());
+  const{inicio,fim}=req.body;
+  if(inicio!=null&&inicio!==""&&!validarHora(inicio))return res.status(400).json({erro:"Horário de início inválido. Use o formato HH:MM."});
+  if(fim!=null&&fim!==""&&!validarHora(fim))return res.status(400).json({erro:"Horário de fim inválido. Use o formato HH:MM."});
+  try{
+    const[[os]]=await db.query("SELECT * FROM servicos WHERE id=? AND empresa_id=?",[id,req.auth.empresaId]);
+    if(!os)return res.status(404).json({erro:"OS não encontrada."});
+    if(!(await tecnicoPodeAcessarOS(req,os)))return res.status(403).json({erro:"Esta OS não pertence ao técnico autenticado."});
+
+    const dataBase=os.criada_data?new Date(os.criada_data):new Date();
+    const montar=hhmm=>{const[h,m]=hhmm.split(":").map(Number);const d=new Date(dataBase);d.setHours(h,m,0,0);return d;};
+
+    const novoInicio=inicio===""?null:(inicio?montar(inicio):undefined);
+    const novoFim=fim===""?null:(fim?montar(fim):undefined);
+    if(novoInicio&&novoFim&&novoFim<=novoInicio)return res.status(400).json({erro:"O fim do almoço precisa ser depois do início."});
+
+    const campos=[],valores=[];
+    if(novoInicio!==undefined){campos.push("almoco_inicio_data=?");valores.push(novoInicio)}
+    if(novoFim!==undefined){campos.push("almoco_fim_data=?");valores.push(novoFim)}
+    if(!campos.length)return res.status(400).json({erro:"Informe ao menos um horário."});
+
+    valores.push(id,req.auth.empresaId);
+    await db.query(`UPDATE servicos SET ${campos.join(",")} WHERE id=? AND empresa_id=?`,valores);
+    res.json({message:"Horário de almoço salvo com sucesso."});
+  }catch(err){handleDbError(res,err,"Não foi possível salvar o horário de almoço.")}
+});
+
 // Solicitação de materiais antes da OS -------------------------------------
 app.get("/materiais/solicitacoes",autenticar,async(req,res)=>{
   try{
