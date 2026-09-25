@@ -186,6 +186,7 @@
   <div class="nav" data-tab="despesas"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>Despesas</div>
   <div class="nav" data-tab="custos"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>Custos por Cliente</div>
   <div class="nav" data-tab="rastreamento"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.1 7-11.5a7 7 0 0 0-14 0C5 14.9 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.4"/></svg>Rastreamento</div>
+  <div class="nav" data-tab="manutencao"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/><path d="M10 11v6M14 11v6"/></svg>Manutenção</div>
   <div class="sidebar-foot">Fielduo v1.2 &middot; Gestão de campo</div>
 </aside>
 <main>
@@ -244,6 +245,12 @@
   <section id="tab-custos" class="tab"><div class="card"><div class="toolbar"><div><h2 style="margin:0">Custos por Cliente</h2><div class="muted">Soma material + despesas + mão de obra + combustível de todas as OS finalizadas de cada cliente.</div></div><button class="btn blue" onclick="carregarCustosPorCliente()">↻ Atualizar</button></div><div class="muted" style="margin-bottom:10px">Mão de obra só entra se o técnico tiver valor/hora cadastrado. Combustível só entra se o veículo tiver custo/km cadastrado (e a OS teve pontos de GPS registrados).</div><table><thead><tr><th>Cliente</th><th>OS</th><th>Material</th><th>Despesas</th><th>Mão de obra</th><th>Combustível</th><th>Km</th><th>Total</th></tr></thead><tbody id="corpo-custos-cliente"></tbody></table></div></section>
 
   <section id="tab-rastreamento" class="tab"><div class="card"><h2>Última localização dos técnicos</h2><div id="map"></div><table><thead><tr><th>Técnico</th><th>Latitude</th><th>Longitude</th><th>Última atualização</th></tr></thead><tbody id="corpo-pontos"></tbody></table></div></section>
+  <section id="tab-manutencao" class="tab"><div class="card" style="max-width:650px">
+    <h2>Limpeza de dados de teste</h2>
+    <p class="muted" style="margin:-4px 0 16px">Procura clientes, técnicos, gestores, veículos, materiais e usuários de login com "teste" no nome (ou e-mail), e exclui junto tudo que estiver ligado a eles: ordens de serviço, despesas e solicitações de material. <b>Essa ação não pode ser desfeita.</b></p>
+    <button class="btn blue" onclick="buscarDadosTeste()">Buscar dados de teste</button>
+    <div id="teste-resultado" style="margin-top:18px"></div>
+  </div></section>
 </main>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="config.js"></script>
@@ -259,10 +266,44 @@ const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const fmt=v=>v?new Date(v).toLocaleString('pt-BR'):'—';
 async function json(url,opts={}){const r=await fetch(url,opts);const d=await r.json().catch(()=>({}));if(r.status===401){sessaoExpirada();throw new Error(d.erro||"Sessão expirada. Faça login novamente.");}if(!r.ok)throw new Error(d.erro||`Erro HTTP ${r.status}`);return d;}
 function statusBadge(status){const mapa={ABERTA:'navy',ATRIBUIDA:'navy',ACEITA:'accent',EM_DESLOCAMENTO:'accent',NO_LOCAL:'accent',EM_ATENDIMENTO:'accent',EM_ALMOCO:'warning',FINALIZADA:'success',CANCELADA:'danger'};const cor=mapa[status]||'navy';const label=({ABERTA:'Aberta',ATRIBUIDA:'Atribuída',ACEITA:'Aceita',EM_DESLOCAMENTO:'Em deslocamento',NO_LOCAL:'No local',EM_ATENDIMENTO:'Em atendimento',EM_ALMOCO:'Em almoço',FINALIZADA:'Finalizada',CANCELADA:'Cancelada'})[status]||status;return `<span class="badge badge-${cor}">${esc(label)}</span>`}
-function showTab(t){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav').forEach(x=>x.classList.remove('active'));document.getElementById('tab-'+t).classList.add('active');document.querySelector(`.nav[data-tab="${t}"]`).classList.add('active');document.getElementById('titulo').textContent={dashboard:'Dashboard',relatorios:'Ordens de Serviço',calendario:'Calendário',cadastros:'Cadastros',usuarios:'Usuários',rastreamento:'Rastreamento','materiais-solicitados':'Solicitações de Material',despesas:'Despesas',custos:'Custos por Cliente'}[t];if(t==='relatorios')carregarOS();if(t==='calendario')listaOS.length?renderCalendario():carregarOS();if(t==='usuarios')carregarUsuarios();if(t==='rastreamento'){initMap();carregarPontos();setTimeout(()=>map&&map.invalidateSize(),100);}if(t==='materiais-solicitados')carregarSolicitacoesMaterial();if(t==='despesas')carregarDespesasGestao();if(t==='custos')carregarCustosPorCliente();}
+function showTab(t){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav').forEach(x=>x.classList.remove('active'));document.getElementById('tab-'+t).classList.add('active');document.querySelector(`.nav[data-tab="${t}"]`).classList.add('active');document.getElementById('titulo').textContent={dashboard:'Dashboard',relatorios:'Ordens de Serviço',calendario:'Calendário',cadastros:'Cadastros',usuarios:'Usuários',rastreamento:'Rastreamento','materiais-solicitados':'Solicitações de Material',despesas:'Despesas',custos:'Custos por Cliente',manutencao:'Manutenção'}[t];if(t==='relatorios')carregarOS();if(t==='calendario')listaOS.length?renderCalendario():carregarOS();if(t==='usuarios')carregarUsuarios();if(t==='rastreamento'){initMap();carregarPontos();setTimeout(()=>map&&map.invalidateSize(),100);}if(t==='materiais-solicitados')carregarSolicitacoesMaterial();if(t==='despesas')carregarDespesasGestao();if(t==='custos')carregarCustosPorCliente();}
 document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>showTab(n.dataset.tab));
 async function resumo(){try{const d=await json(`${API}/gestao/resumo`,{headers:apiHeaders()});['os','hoje','tec','cli','ges'].forEach((k,i)=>document.getElementById(['st-os','st-hoje','st-tec','st-cli','st-ges'][i]).textContent=[d.ordens,d.ordensHoje,d.tecnicos,d.clientes,d.gestores][i]);}catch(e){console.error(e)}}
 async function carregarOS(){try{listaOS=await json(`${API}/gestao/relatorios?limite=500`,{headers:apiHeaders()});renderOS();renderDashboardOS();renderCalendario();}catch(e){alert(e.message)}}
+
+async function buscarDadosTeste(){
+  const el=document.getElementById('teste-resultado');
+  el.innerHTML='Buscando...';
+  try{
+    const d=await json(`${API}/gestao/limpeza-teste`,{headers:apiHeaders()});
+    if(!d.total){el.innerHTML='<p class="muted">Nenhum cadastro com "teste" no nome foi encontrado.</p>';return}
+    const linhas=[
+      ['Clientes',d.clientes.length],['Técnicos',d.colaboradores.length],['Gestores',d.gestores.length],
+      ['Veículos',d.veiculos.length],['Materiais',d.materiais.length],['Usuários de login',d.usuarios.length],
+      ['Ordens de serviço vinculadas',d.servicos],['Despesas vinculadas',d.despesas],['Solicitações de material vinculadas',d.solicitacoes],
+    ];
+    const nomes=[...d.clientes,...d.colaboradores,...d.gestores,...d.veiculos,...d.materiais,...d.usuarios].map(x=>esc(x.nome)).join(', ');
+    el.innerHTML=`
+      <table style="width:100%;margin-bottom:6px">${linhas.map(([label,n])=>`<tr><td style="padding:4px 8px">${label}</td><td style="padding:4px 8px;font-weight:700;text-align:right">${n}</td></tr>`).join('')}</table>
+      <div class="muted" style="font-size:12.5px;margin-bottom:14px">Cadastros encontrados: ${nomes}</div>
+      <label style="display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:4px">Digite EXCLUIR para confirmar a exclusão definitiva</label>
+      <input id="teste-confirmar" class="input-form" placeholder="EXCLUIR" style="max-width:220px"/>
+      <div id="teste-erro" style="color:var(--danger);font-size:12.5px;font-weight:600;margin-top:8px;min-height:14px"></div>
+      <button class="btn red" style="margin-top:6px" onclick="excluirDadosTeste()">Excluir definitivamente</button>
+    `;
+  }catch(e){el.innerHTML=`<p style="color:var(--danger)">${esc(e.message)}</p>`}
+}
+async function excluirDadosTeste(){
+  const confirmar=document.getElementById('teste-confirmar').value.trim();
+  const erroEl=document.getElementById('teste-erro');
+  if(confirmar!=='EXCLUIR'){erroEl.textContent='Digite EXCLUIR (em letras maiúsculas) para confirmar.';return}
+  erroEl.textContent='';
+  try{
+    const r=await json(`${API}/gestao/limpeza-teste`,{method:'POST',headers:apiHeaders(),body:JSON.stringify({confirmar})});
+    document.getElementById('teste-resultado').innerHTML=`<p style="color:var(--success);font-weight:600">${esc(r.message)}</p>`;
+    carregarOS();resumo();
+  }catch(e){erroEl.textContent=e.message}
+}
 
 function formatarDataDigitada(texto){const digitos=texto.replace(/\D/g,'').slice(0,8);if(digitos.length<=2)return digitos;if(digitos.length<=4)return `${digitos.slice(0,2)}/${digitos.slice(2)}`;return `${digitos.slice(0,2)}/${digitos.slice(2,4)}/${digitos.slice(4)}`}
 async function abrirModalNovaOS(){

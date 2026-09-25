@@ -110,6 +110,11 @@ function handleDbError(res, err, mensagem = "Erro ao acessar o banco de dados.")
   return res.status(500).json({ erro: mensagem });
 }
 function validarId(id) { return /^\d+$/.test(String(id)) && Number(id) > 0; }
+// Monta um "IN (...)" seguro a partir de uma lista de ids que já vieram do
+// próprio banco (nunca direto do usuário) — por isso pode ser inserido
+// direto na string, sem parâmetro. Lista vazia cai num "-1" (nunca bate com
+// nenhum id real), pra não gerar "IN ()" inválido no SQL.
+function inSql(ids) { return ids.length ? ids.map(Number).join(",") : "-1"; }
 function normalizarEmail(v) { return String(v || "").trim().toLowerCase(); }
 function base64url(input) { return Buffer.from(input).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_"); }
 function gerarToken(payload, expSeconds = 60 * 60 * 12) {
@@ -449,7 +454,150 @@ app.delete("/auth/usuarios/:id", autenticar, exigirPerfil("ADMIN"), async(req,re
   }catch(err){handleDbError(res,err,"Não foi possível excluir o usuário.");}
 });
 
-// Distância entre dois pontos GPS (fórmula de Haversine), em km.
+// Acha tudo que tem "teste" no nome (clientes, técnicos, gestores, veículos,
+// materiais e usuários de login) e também o que está ligado a eles (OS,
+// despesas, solicitações de material) — usado tanto pra mostrar a prévia
+// quanto pra executar a exclusão de fato, então fica num lugar só.
+async function buscarDadosTeste(empresaId, usuarioAtualId) {
+  const termo = "%teste%";
+  const [[clientes], [colaboradores], [gestores], [veiculos], [materiais], [usuariosPorNome]] = await Promise.all([
+    db.query("SELECT id,nome FROM clientes WHERE empresa_id=? AND nome LIKE ?", [empresaId, termo]),
+    db.query("SELECT id,nome FROM colaboradores WHERE empresa_id=? AND nome LIKE ?", [empresaId, termo]),
+    db.query("SELECT id,nome FROM gestores WHERE empresa_id=? AND nome LIKE ?", [empresaId, termo]),
+    db.query("SELECT id,nome FROM veiculos WHERE empresa_id=? AND nome LIKE ?", [empresaId, termo]),
+    db.query("SELECT id,nome FROM materiais WHERE empresa_id=? AND nome LIKE ?", [empresaId, termo]),
+    db.query("SELECT id,nome,email,perfil FROM usuarios WHERE empresa_id=? AND (nome LIKE ? OR email LIKE ?)", [empresaId, termo, termo]),
+  ]);
+  const clientesIds = clientes.map(r => r.id);
+  const colaboradoresIds = colaboradores.map(r => r.id);
+  const gestoresIds = gestores.map(r => r.id);
+  const veiculosIds = veiculos.map(r => r.id);
+  const materiaisIds = materiais.map(r => r.id);
+
+  // Login de um técnico de teste entra também, mesmo que o nome/e-mail do
+  // login em si não tenha "teste" — senão sobra um usuário sem colaborador
+  // por trás depois que o técnico for excluído.
+  let usuariosLigados = [];
+  if (colaboradoresIds.length) {
+    const [rows] = await db.query(`SELECT id,nome,email,perfil FROM usuarios WHERE empresa_id=? AND colaborador_id IN (${inSql(colaboradoresIds)})`, [empresaId]);
+    usuariosLigados = rows;
+  }
+  const usuariosMapa = new Map();
+  [...usuariosPorNome, ...usuariosLigados].forEach(u => usuariosMapa.set(u.id, u));
+  // Por segurança, nunca inclui automaticamente o usuário logado nem contas
+  // ADMIN na exclusão — essas precisam ser removidas manualmente se for o caso.
+  const usuarios = [...usuariosMapa.values()].filter(u => u.id !== usuarioAtualId && u.perfil !== "ADMIN");
+  const usuariosIds = usuarios.map(u => u.id);
+
+  let servicos = [];
+  const condServicos = [];
+  if (colaboradoresIds.length) condServicos.push(`tecnico_id IN (${inSql(colaboradoresIds)})`);
+  if (clientesIds.length) condServicos.push(`cliente_id IN (${inSql(clientesIds)})`);
+  if (gestoresIds.length) condServicos.push(`gestor_id IN (${inSql(gestoresIds)})`);
+  if (veiculosIds.length) condServicos.push(`veiculo_id IN (${inSql(veiculosIds)})`);
+  if (condServicos.length) {
+    const [rows] = await db.query(`SELECT id,foto_conclusao,cliente_assinatura FROM servicos WHERE empresa_id=? AND (${condServicos.join(" OR ")})`, [empresaId]);
+    servicos = rows;
+  }
+  const servicosIds = servicos.map(r => r.id);
+
+  let despesas = [];
+  const condDespesas = [];
+  if (servicosIds.length) condDespesas.push(`servico_id IN (${inSql(servicosIds)})`);
+  if (clientesIds.length) condDespesas.push(`cliente_id IN (${inSql(clientesIds)})`);
+  if (colaboradoresIds.length) condDespesas.push(`tecnico_id IN (${inSql(colaboradoresIds)})`);
+  if (condDespesas.length) {
+    const [rows] = await db.query(`SELECT id,foto_recibo FROM despesas WHERE empresa_id=? AND (${condDespesas.join(" OR ")})`, [empresaId]);
+    despesas = rows;
+  }
+
+  let totalSolicitacoes = 0;
+  const condSolic = [];
+  if (colaboradoresIds.length) condSolic.push(`tecnico_id IN (${inSql(colaboradoresIds)})`);
+  if (clientesIds.length) condSolic.push(`cliente_id IN (${inSql(clientesIds)})`);
+  if (materiaisIds.length) condSolic.push(`material_id IN (${inSql(materiaisIds)})`);
+  if (condSolic.length) {
+    const [[linha]] = await db.query(`SELECT COUNT(*) total FROM solicitacoes_materiais WHERE empresa_id=? AND (${condSolic.join(" OR ")})`, [empresaId]);
+    totalSolicitacoes = Number(linha.total);
+  }
+
+  return { clientes, colaboradores, gestores, veiculos, materiais, usuarios, servicos, despesas, totalSolicitacoes };
+}
+
+app.get("/gestao/limpeza-teste", autenticar, exigirPerfil("ADMIN"), async (req, res) => {
+  try {
+    const d = await buscarDadosTeste(req.auth.empresaId, req.auth.usuarioId);
+    const total = d.clientes.length + d.colaboradores.length + d.gestores.length + d.veiculos.length + d.materiais.length + d.usuarios.length;
+    res.json({
+      total,
+      clientes: d.clientes, colaboradores: d.colaboradores, gestores: d.gestores,
+      veiculos: d.veiculos, materiais: d.materiais, usuarios: d.usuarios,
+      servicos: d.servicos.length, despesas: d.despesas.length, solicitacoes: d.totalSolicitacoes,
+    });
+  } catch (err) { handleDbError(res, err, "Não foi possível buscar os dados de teste."); }
+});
+
+app.post("/gestao/limpeza-teste", autenticar, exigirPerfil("ADMIN"), async (req, res) => {
+  if (String(req.body.confirmar || "").trim() !== "EXCLUIR") {
+    return res.status(400).json({ erro: "Digite EXCLUIR para confirmar a exclusão definitiva." });
+  }
+  const empresaId = req.auth.empresaId;
+  const conn = await db.getConnection();
+  try {
+    const d = await buscarDadosTeste(empresaId, req.auth.usuarioId);
+    const clientesIds = d.clientes.map(r => r.id), colaboradoresIds = d.colaboradores.map(r => r.id),
+      gestoresIds = d.gestores.map(r => r.id), veiculosIds = d.veiculos.map(r => r.id),
+      materiaisIds = d.materiais.map(r => r.id), usuariosIds = d.usuarios.map(r => r.id),
+      servicosIds = d.servicos.map(r => r.id);
+
+    await conn.beginTransaction();
+    if (servicosIds.length) {
+      await conn.query(`DELETE FROM servico_status_historico WHERE servico_id IN (${inSql(servicosIds)})`);
+      await conn.query(`DELETE FROM servico_materiais WHERE servico_id IN (${inSql(servicosIds)})`);
+    }
+    if (materiaisIds.length) await conn.query(`DELETE FROM servico_materiais WHERE material_id IN (${inSql(materiaisIds)})`);
+
+    const condDespesas = [];
+    if (servicosIds.length) condDespesas.push(`servico_id IN (${inSql(servicosIds)})`);
+    if (clientesIds.length) condDespesas.push(`cliente_id IN (${inSql(clientesIds)})`);
+    if (colaboradoresIds.length) condDespesas.push(`tecnico_id IN (${inSql(colaboradoresIds)})`);
+    if (condDespesas.length) await conn.query(`DELETE FROM despesas WHERE empresa_id=? AND (${condDespesas.join(" OR ")})`, [empresaId]);
+
+    const condSolic = [];
+    if (colaboradoresIds.length) condSolic.push(`tecnico_id IN (${inSql(colaboradoresIds)})`);
+    if (clientesIds.length) condSolic.push(`cliente_id IN (${inSql(clientesIds)})`);
+    if (materiaisIds.length) condSolic.push(`material_id IN (${inSql(materiaisIds)})`);
+    if (condSolic.length) await conn.query(`DELETE FROM solicitacoes_materiais WHERE empresa_id=? AND (${condSolic.join(" OR ")})`, [empresaId]);
+
+    const condPontos = [];
+    if (colaboradoresIds.length) condPontos.push(`tecnico_id IN (${inSql(colaboradoresIds)})`);
+    if (servicosIds.length) condPontos.push(`os_id IN (${inSql(servicosIds)})`);
+    if (condPontos.length) await conn.query(`DELETE FROM pontos WHERE empresa_id=? AND (${condPontos.join(" OR ")})`, [empresaId]);
+
+    if (servicosIds.length) await conn.query(`DELETE FROM servicos WHERE id IN (${inSql(servicosIds)})`);
+    if (usuariosIds.length) await conn.query(`DELETE FROM usuarios WHERE id IN (${inSql(usuariosIds)})`);
+    if (clientesIds.length) await conn.query(`DELETE FROM clientes WHERE id IN (${inSql(clientesIds)})`);
+    if (colaboradoresIds.length) await conn.query(`DELETE FROM colaboradores WHERE id IN (${inSql(colaboradoresIds)})`);
+    if (gestoresIds.length) await conn.query(`DELETE FROM gestores WHERE id IN (${inSql(gestoresIds)})`);
+    if (veiculosIds.length) await conn.query(`DELETE FROM veiculos WHERE id IN (${inSql(veiculosIds)})`);
+    if (materiaisIds.length) await conn.query(`DELETE FROM materiais WHERE id IN (${inSql(materiaisIds)})`);
+    await conn.commit();
+
+    // Só apaga os arquivos de foto/assinatura do disco depois que o banco
+    // confirmou de verdade — se a transação caísse, os arquivos ficariam órfãos.
+    d.servicos.forEach(s => { excluirArquivosFotos(s.foto_conclusao); excluirArquivosFotos(s.cliente_assinatura); });
+    d.despesas.forEach(dp => excluirArquivosFotos(dp.foto_recibo));
+
+    res.json({
+      message: `Exclusão concluída: ${clientesIds.length} cliente(s), ${colaboradoresIds.length} técnico(s), ${gestoresIds.length} gestor(es), ${veiculosIds.length} veículo(s), ${materiaisIds.length} material(is), ${usuariosIds.length} usuário(s) de login, ${servicosIds.length} OS e ${d.despesas.length} despesa(s).`,
+    });
+  } catch (err) {
+    await conn.rollback();
+    handleDbError(res, err, "Não foi possível concluir a exclusão dos dados de teste.");
+  } finally {
+    conn.release();
+  }
+});
 function distanciaKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
