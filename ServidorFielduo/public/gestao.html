@@ -125,6 +125,13 @@
     .user-chip .perfil{font-size:11px;color:var(--muted)}
     .user-chip button{border:0;background:none;cursor:pointer;color:var(--muted);padding:4px;border-radius:8px;display:flex}
     .user-chip button:hover{background:var(--danger-soft);color:var(--danger)}
+
+    .modal-overlay{position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;background:rgba(15,23,42,.55);padding:20px}
+    .modal-overlay.show{display:flex}
+    .modal-card{width:420px;max-width:100%;max-height:90vh;overflow-y:auto;background:var(--card);border-radius:var(--radius-xl);padding:26px;box-shadow:var(--shadow-lg)}
+    .modal-card h2{font-size:17px;margin:0 0 16px;color:var(--ink)}
+    .modal-card label{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin:12px 0 4px}
+    .modal-actions{display:flex;gap:8px;margin-top:20px;justify-content:flex-end}
   </style>
 </head>
 <body>
@@ -137,6 +144,32 @@
     <input id="login-senha" class="input-form" type="password" placeholder="Senha" autocomplete="current-password" onkeydown="if(event.key==='Enter')fazerLogin()"/>
     <div id="login-erro" class="login-erro"></div>
     <button class="btn orange btn-full" onclick="fazerLogin()">Entrar</button>
+  </div>
+</div>
+<div id="modal-nova-os" class="modal-overlay">
+  <div class="modal-card">
+    <h2>Nova Ordem de Serviço</h2>
+    <label>Técnico</label>
+    <select id="nos-tecnico" class="input-form"></select>
+    <label>Cliente</label>
+    <select id="nos-cliente" class="input-form"></select>
+    <label>Gestor</label>
+    <select id="nos-gestor" class="input-form"></select>
+    <label>Veículo (opcional)</label>
+    <select id="nos-veiculo" class="input-form"><option value="">— Nenhum —</option></select>
+    <label style="display:flex;align-items:center;gap:7px;margin-top:16px;cursor:pointer" onclick="document.getElementById('nos-retroativa').click()">
+      <input id="nos-retroativa" type="checkbox" style="width:auto;margin:0" onchange="document.getElementById('nos-data-retroativa-wrap').style.display=this.checked?'block':'none'"/>
+      OS de um dia anterior (esqueci de criar na hora)
+    </label>
+    <div id="nos-data-retroativa-wrap" style="display:none">
+      <label>Data do atendimento (DD/MM/AAAA)</label>
+      <input id="nos-data-retroativa" class="input-form" placeholder="DD/MM/AAAA" maxlength="10" oninput="this.value=formatarDataDigitada(this.value)"/>
+    </div>
+    <div id="nos-erro" style="color:var(--danger);font-size:12.5px;font-weight:600;margin-top:10px;min-height:14px"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="fecharModalNovaOS()">Cancelar</button>
+      <button class="btn green" onclick="criarOSPainel()">Criar OS</button>
+    </div>
   </div>
 </div>
 <aside>
@@ -163,7 +196,7 @@
     <div class="card"><h2>Últimas OS</h2><table><thead><tr><th>ID</th><th>Data</th><th>Técnico</th><th>Cliente</th><th>Status</th><th>Ação</th></tr></thead><tbody id="dashboard-os"></tbody></table></div>
   </section>
 
-  <section id="tab-relatorios" class="tab"><div class="card"><div class="toolbar"><input id="busca-os" class="input-form" style="max-width:350px" placeholder="Buscar por técnico, cliente ou ID" oninput="renderOS()"/><button class="btn blue" onclick="carregarOS()">Atualizar OS</button></div><table><thead><tr><th>ID</th><th>Data</th><th>Técnico</th><th>Cliente</th><th>Gestor</th><th>Status</th><th>Ações</th></tr></thead><tbody id="corpo-tabela-os"></tbody></table></div></section>
+  <section id="tab-relatorios" class="tab"><div class="card"><div class="toolbar"><input id="busca-os" class="input-form" style="max-width:350px" placeholder="Buscar por técnico, cliente ou ID" oninput="renderOS()"/><button class="btn green" onclick="abrirModalNovaOS()">+ Nova OS</button><button class="btn blue" onclick="carregarOS()">Atualizar OS</button></div><table><thead><tr><th>ID</th><th>Data</th><th>Técnico</th><th>Cliente</th><th>Gestor</th><th>Status</th><th>Ações</th></tr></thead><tbody id="corpo-tabela-os"></tbody></table></div></section>
   <section id="tab-calendario" class="tab"><div class="card">
     <div class="toolbar" style="justify-content:space-between">
       <div style="display:flex;align-items:center;gap:10px">
@@ -230,6 +263,43 @@ function showTab(t){document.querySelectorAll('.tab').forEach(x=>x.classList.rem
 document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>showTab(n.dataset.tab));
 async function resumo(){try{const d=await json(`${API}/gestao/resumo`,{headers:apiHeaders()});['os','hoje','tec','cli','ges'].forEach((k,i)=>document.getElementById(['st-os','st-hoje','st-tec','st-cli','st-ges'][i]).textContent=[d.ordens,d.ordensHoje,d.tecnicos,d.clientes,d.gestores][i]);}catch(e){console.error(e)}}
 async function carregarOS(){try{listaOS=await json(`${API}/gestao/relatorios?limite=500`,{headers:apiHeaders()});renderOS();renderDashboardOS();renderCalendario();}catch(e){alert(e.message)}}
+
+function formatarDataDigitada(texto){const digitos=texto.replace(/\D/g,'').slice(0,8);if(digitos.length<=2)return digitos;if(digitos.length<=4)return `${digitos.slice(0,2)}/${digitos.slice(2)}`;return `${digitos.slice(0,2)}/${digitos.slice(2,4)}/${digitos.slice(4)}`}
+async function abrirModalNovaOS(){
+  document.getElementById('nos-erro').textContent='';
+  document.getElementById('nos-retroativa').checked=false;
+  document.getElementById('nos-data-retroativa').value='';
+  document.getElementById('nos-data-retroativa-wrap').style.display='none';
+  try{
+    const[tecnicos,clientes,gestores,veiculos]=await Promise.all([
+      json(`${API}/colaboradores`,{headers:apiHeaders()}),
+      json(`${API}/clientes`,{headers:apiHeaders()}),
+      json(`${API}/gestores`,{headers:apiHeaders()}),
+      json(`${API}/veiculos`,{headers:apiHeaders()}),
+    ]);
+    document.getElementById('nos-tecnico').innerHTML=tecnicos.map(t=>`<option value="${t.id}">${esc(t.nome)}</option>`).join('')||'<option value="">Nenhum técnico cadastrado</option>';
+    document.getElementById('nos-cliente').innerHTML=clientes.map(c=>`<option value="${c.id}">${esc(c.nome)}${c.bairro?` (${esc(c.bairro)})`:''}</option>`).join('')||'<option value="">Nenhum cliente cadastrado</option>';
+    document.getElementById('nos-gestor').innerHTML=gestores.map(g=>`<option value="${g.id}">${esc(g.nome)}</option>`).join('')||'<option value="">Nenhum gestor cadastrado</option>';
+    document.getElementById('nos-veiculo').innerHTML='<option value="">— Nenhum —</option>'+veiculos.map(v=>`<option value="${v.id}">${esc(v.nome)}${v.placa?` (${esc(v.placa)})`:''}</option>`).join('');
+  }catch(e){document.getElementById('nos-erro').textContent=e.message;}
+  document.getElementById('modal-nova-os').classList.add('show');
+}
+function fecharModalNovaOS(){document.getElementById('modal-nova-os').classList.remove('show')}
+async function criarOSPainel(){
+  const tecnico_id=document.getElementById('nos-tecnico').value;
+  const cliente_id=document.getElementById('nos-cliente').value;
+  const gestor_id=document.getElementById('nos-gestor').value;
+  const veiculo_id=document.getElementById('nos-veiculo').value||null;
+  const retroativa=document.getElementById('nos-retroativa').checked;
+  const data_criacao=retroativa?document.getElementById('nos-data-retroativa').value:undefined;
+  if(!tecnico_id||!cliente_id||!gestor_id){document.getElementById('nos-erro').textContent='Selecione técnico, cliente e gestor.';return}
+  if(retroativa&&!/^\d{2}\/\d{2}\/\d{4}$/.test(data_criacao||'')){document.getElementById('nos-erro').textContent='Digite a data retroativa no formato DD/MM/AAAA.';return}
+  try{
+    await json(`${API}/servico/criar`,{method:'POST',headers:apiHeaders(),body:JSON.stringify({tecnico_id,cliente_id,gestor_id,veiculo_id,data_criacao})});
+    fecharModalNovaOS();
+    carregarOS();
+  }catch(e){document.getElementById('nos-erro').textContent=e.message;}
+}
 
 let calendarioRef=new Date();
 function mudarMesCalendario(delta){calendarioRef=new Date(calendarioRef.getFullYear(),calendarioRef.getMonth()+delta,1);renderCalendario();}
