@@ -454,12 +454,12 @@ app.delete("/auth/usuarios/:id", autenticar, exigirPerfil("ADMIN"), async(req,re
   }catch(err){handleDbError(res,err,"Não foi possível excluir o usuário.");}
 });
 
-// Acha tudo que tem "teste" no nome (clientes, técnicos, gestores, veículos,
-// materiais e usuários de login) e também o que está ligado a eles (OS,
-// despesas, solicitações de material) — usado tanto pra mostrar a prévia
-// quanto pra executar a exclusão de fato, então fica num lugar só.
-async function buscarDadosTeste(empresaId, usuarioAtualId) {
-  const termo = "%teste%";
+// Acha tudo que bate com o termo de busca (clientes, técnicos, gestores,
+// veículos, materiais e usuários de login) e também o que está ligado a
+// eles (OS, despesas, solicitações de material) — usado tanto pra mostrar
+// a prévia quanto pra executar a exclusão de fato, então fica num lugar só.
+async function buscarDadosLimpeza(empresaId, usuarioAtualId, termoBusca) {
+  const termo = `%${termoBusca}%`;
   const [[clientes], [colaboradores], [gestores], [veiculos], [materiais], [usuariosPorNome]] = await Promise.all([
     db.query("SELECT id,nome FROM clientes WHERE empresa_id=? AND nome LIKE ?", [empresaId, termo]),
     db.query("SELECT id,nome FROM colaboradores WHERE empresa_id=? AND nome LIKE ?", [empresaId, termo]),
@@ -525,8 +525,10 @@ async function buscarDadosTeste(empresaId, usuarioAtualId) {
 }
 
 app.get("/gestao/limpeza-teste", autenticar, exigirPerfil("ADMIN"), async (req, res) => {
+  const termoBusca = String(req.query.termo || "").trim();
+  if (termoBusca.length < 2) return res.status(400).json({ erro: "Digite pelo menos 2 letras pra buscar." });
   try {
-    const d = await buscarDadosTeste(req.auth.empresaId, req.auth.usuarioId);
+    const d = await buscarDadosLimpeza(req.auth.empresaId, req.auth.usuarioId, termoBusca);
     const total = d.clientes.length + d.colaboradores.length + d.gestores.length + d.veiculos.length + d.materiais.length + d.usuarios.length;
     res.json({
       total,
@@ -534,17 +536,22 @@ app.get("/gestao/limpeza-teste", autenticar, exigirPerfil("ADMIN"), async (req, 
       veiculos: d.veiculos, materiais: d.materiais, usuarios: d.usuarios,
       servicos: d.servicos.length, despesas: d.despesas.length, solicitacoes: d.totalSolicitacoes,
     });
-  } catch (err) { handleDbError(res, err, "Não foi possível buscar os dados de teste."); }
+  } catch (err) { handleDbError(res, err, "Não foi possível buscar os dados."); }
 });
 
 app.post("/gestao/limpeza-teste", autenticar, exigirPerfil("ADMIN"), async (req, res) => {
+  const termoBusca = String(req.body.termo || "").trim();
+  if (termoBusca.length < 2) return res.status(400).json({ erro: "Digite pelo menos 2 letras pra buscar." });
   if (String(req.body.confirmar || "").trim() !== "EXCLUIR") {
     return res.status(400).json({ erro: "Digite EXCLUIR para confirmar a exclusão definitiva." });
   }
   const empresaId = req.auth.empresaId;
   const conn = await db.getConnection();
   try {
-    const d = await buscarDadosTeste(empresaId, req.auth.usuarioId);
+    // Refaz a mesma busca no momento de excluir, em vez de confiar em ids
+    // que o navegador teria mandado de volta — assim ninguém consegue
+    // manipular o que vai ser excluído.
+    const d = await buscarDadosLimpeza(empresaId, req.auth.usuarioId, termoBusca);
     const clientesIds = d.clientes.map(r => r.id), colaboradoresIds = d.colaboradores.map(r => r.id),
       gestoresIds = d.gestores.map(r => r.id), veiculosIds = d.veiculos.map(r => r.id),
       materiaisIds = d.materiais.map(r => r.id), usuariosIds = d.usuarios.map(r => r.id),
@@ -593,7 +600,7 @@ app.post("/gestao/limpeza-teste", autenticar, exigirPerfil("ADMIN"), async (req,
     });
   } catch (err) {
     await conn.rollback();
-    handleDbError(res, err, "Não foi possível concluir a exclusão dos dados de teste.");
+    handleDbError(res, err, "Não foi possível concluir a exclusão.");
   } finally {
     conn.release();
   }

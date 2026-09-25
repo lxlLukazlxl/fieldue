@@ -246,9 +246,12 @@
 
   <section id="tab-rastreamento" class="tab"><div class="card"><h2>Última localização dos técnicos</h2><div id="map"></div><table><thead><tr><th>Técnico</th><th>Latitude</th><th>Longitude</th><th>Última atualização</th></tr></thead><tbody id="corpo-pontos"></tbody></table></div></section>
   <section id="tab-manutencao" class="tab"><div class="card" style="max-width:650px">
-    <h2>Limpeza de dados de teste</h2>
-    <p class="muted" style="margin:-4px 0 16px">Procura clientes, técnicos, gestores, veículos, materiais e usuários de login com "teste" no nome (ou e-mail), e exclui junto tudo que estiver ligado a eles: ordens de serviço, despesas e solicitações de material. <b>Essa ação não pode ser desfeita.</b></p>
-    <button class="btn blue" onclick="buscarDadosTeste()">Buscar dados de teste</button>
+    <h2>Excluir cadastros e sujeira do sistema</h2>
+    <p class="muted" style="margin:-4px 0 16px">Digite parte de um nome (ex: "mobi", "teste") pra encontrar clientes, técnicos, gestores, veículos, materiais e usuários de login que batem com a busca. Exclui junto tudo que estiver ligado a eles: ordens de serviço, despesas e solicitações de material. <b>Essa ação não pode ser desfeita.</b></p>
+    <div class="toolbar">
+      <input id="teste-termo" class="input-form" style="max-width:280px" placeholder="Digite o que quer buscar..." onkeydown="if(event.key==='Enter')buscarDadosTeste()"/>
+      <button class="btn blue" onclick="buscarDadosTeste()">Buscar</button>
+    </div>
     <div id="teste-resultado" style="margin-top:18px"></div>
   </div></section>
 </main>
@@ -272,11 +275,13 @@ async function resumo(){try{const d=await json(`${API}/gestao/resumo`,{headers:a
 async function carregarOS(){try{listaOS=await json(`${API}/gestao/relatorios?limite=500`,{headers:apiHeaders()});renderOS();renderDashboardOS();renderCalendario();}catch(e){alert(e.message)}}
 
 async function buscarDadosTeste(){
+  const termo=document.getElementById('teste-termo').value.trim();
   const el=document.getElementById('teste-resultado');
+  if(termo.length<2){el.innerHTML='<p style="color:var(--danger)">Digite pelo menos 2 letras pra buscar.</p>';return}
   el.innerHTML='Buscando...';
   try{
-    const d=await json(`${API}/gestao/limpeza-teste`,{headers:apiHeaders()});
-    if(!d.total){el.innerHTML='<p class="muted">Nenhum cadastro com "teste" no nome foi encontrado.</p>';return}
+    const d=await json(`${API}/gestao/limpeza-teste?termo=${encodeURIComponent(termo)}`,{headers:apiHeaders()});
+    if(!d.total){el.innerHTML=`<p class="muted">Nenhum cadastro encontrado com "${esc(termo)}".</p>`;return}
     const linhas=[
       ['Clientes',d.clientes.length],['Técnicos',d.colaboradores.length],['Gestores',d.gestores.length],
       ['Veículos',d.veiculos.length],['Materiais',d.materiais.length],['Usuários de login',d.usuarios.length],
@@ -294,12 +299,13 @@ async function buscarDadosTeste(){
   }catch(e){el.innerHTML=`<p style="color:var(--danger)">${esc(e.message)}</p>`}
 }
 async function excluirDadosTeste(){
+  const termo=document.getElementById('teste-termo').value.trim();
   const confirmar=document.getElementById('teste-confirmar').value.trim();
   const erroEl=document.getElementById('teste-erro');
   if(confirmar!=='EXCLUIR'){erroEl.textContent='Digite EXCLUIR (em letras maiúsculas) para confirmar.';return}
   erroEl.textContent='';
   try{
-    const r=await json(`${API}/gestao/limpeza-teste`,{method:'POST',headers:apiHeaders(),body:JSON.stringify({confirmar})});
+    const r=await json(`${API}/gestao/limpeza-teste`,{method:'POST',headers:apiHeaders(),body:JSON.stringify({termo,confirmar})});
     document.getElementById('teste-resultado').innerHTML=`<p style="color:var(--success);font-weight:600">${esc(r.message)}</p>`;
     carregarOS();resumo();
   }catch(e){erroEl.textContent=e.message}
